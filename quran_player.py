@@ -20,6 +20,7 @@ import quran_search
 import arabic_topng
 
 # Define global variables
+os.environ['SDL_AUDIODEVICE'] = 'default'
 # directories
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONTROL_DIR =  os.path.join(SCRIPT_DIR, "control")
@@ -49,6 +50,16 @@ def ensure_dirs():
     os.makedirs(USER_CONFIG_DIR, exist_ok=True)
     os.makedirs(CONTROL_DIR, exist_ok=True)
     os.makedirs(SAMPLE_DIR, exist_ok=True)
+
+    dest_file = os.path.join(USER_CONFIG_DIR, "arabic-font.ttf")
+    src_file = os.path.join(SCRIPT_DIR, "arabic-font.ttf")
+
+    if not os.path.exists(dest_file):
+        if os.path.exists(src_file):
+            shutil.copy2(src_file, dest_file)
+            print(f"Copied: arabic-font.ttf")
+        else:
+            print(f"Missing source file: {src_file}")
     
     for filename in REQUIRED_FILES:
         dest_file = os.path.join(SAMPLE_DIR, filename)
@@ -112,10 +123,12 @@ class Daemon:
         self.feh_process = None 
         # Initialize mixer with buffer settings
         # Initialize pygame only once
+        os.environ['SDL_AUDIODRIVER'] = 'pulseaudio'  # or '' 'pipewire'
         if not pygame.get_init():
             pygame.init()
-            pygame.mixer.init(frequency=44100, buffer=1024)
-            
+            if not self.init_audio():
+                self.log_action("SYSTEM", "Audio initialization failed - running in silent mode")
+
         # Load previous state
         self.load_playback_state()
 
@@ -124,6 +137,41 @@ class Daemon:
             self.config.get('daemon', 'FILES_DIRECTORY',
                           fallback=os.path.join(USER_CONFIG_DIR, "sample/"))
         )
+
+    def init_audio(self, max_retries=3, retry_delay=1):
+        drivers = ['alsa', 'pulseaudio', 'dsp', 'dummy']
+        
+        for attempt in range(max_retries):
+            for driver in drivers:
+                try:
+                    os.environ['SDL_AUDIODRIVER'] = driver
+                    pygame.mixer.init(
+                        frequency=44100,
+                        size=-16,
+                        channels=2,
+                        buffer=1024,
+                        allowedchanges=0
+                    )
+                    self.log_action("SYSTEM", f"Successfully initialized with {driver}")
+                    return True
+                except pygame.error as e:
+                    self.log_action("SYSTEM", f"Failed with {driver}: {str(e)}")
+
+            self.log_action("SYSTEM", f"Retrying audio initialization ({attempt+1}/{max_retries})")
+            time.sleep(retry_delay)
+
+        self.log_action("SYSTEM", "Falling back to dummy audio driver")
+        os.environ['SDL_AUDIODRIVER'] = 'dummy'
+        pygame.mixer.init()
+        return False
+    
+    def restart_audio_system(self):
+        pygame.mixer.quit()
+        time.sleep(0.5)  # Important: Give system time to release resources
+        if not self.init_audio():
+            print("Failed to recover audio after crash")
+
+        # Call this after catching exceptions in your playback loop
 
     def log_action(self, flag, msg):
         """Log an action with timestamp, PID, method, flag, and message."""
@@ -135,6 +183,12 @@ class Daemon:
             log.write(log_entry)
         #print(log_entry.strip())
 
+    def verify_audio_config(self):
+        """Check for valid audio configuration"""
+        if 'pulse' not in os.popen('pactl info').read():
+            self.log_action("ERROR", "PulseAudio/PipeWire not running!")
+            return False
+        return True
 
     def initialize_pygame(self):
         """Safely initialize pygame resources once"""
@@ -155,7 +209,7 @@ class Daemon:
             },
             "image": {
                 "default_resolution": "1240x170",
-                "FONT_FILE": "Amiri",
+                "FONT_FILE": os.path.join(USER_CONFIG_DIR, "arabic-font.ttf"),
                 "FONT_SIZE": 48,
                 "IMAGE_WIDTH": 1240,
                 "WRAP_WIDTH": 170,
@@ -253,6 +307,7 @@ class Daemon:
         with open(USER_CONFIG_FILE, "w") as configfile:
             config.write(configfile)
         self.log_action("SYSTEM", f"Default config generated at {USER_CONFIG_FILE}")
+        return True
 
     def handle_command(self, command):
         """Process a received command using dedicated handler methods."""
@@ -294,7 +349,7 @@ class Daemon:
                     conn.sendall(b"ERROR: Missing surah:ayah\n")
                     return
                 success = self.handle_load(args)
-            elif command in ["play", "pause", "stop", "prev", "next","start","status"]:
+            elif command in ["play", "pause", "stop", "prev", "next","start","status", "config"]:
                 success = getattr(self, f"handle_{command}")()
             else:
                 conn.sendall(b"ERROR: Unknown command\n")
@@ -313,6 +368,9 @@ class Daemon:
 
     def handle_start(self):
         """Safe daemon startup with file lock to prevent races"""
+        if not self.verify_audio_config():
+            sys.exit(1)
+
         cleanup_orphaned_files()
 
         # Use a lock file to prevent multiple instances
@@ -535,6 +593,8 @@ class Daemon:
                 return True
             except pygame.error as e:
                 self.log_action("ERROR", f"Playback failed: {str(e)}")
+                self.log_action("SYSTEM", "trying to restart audio engine")
+                self.restart_audio_system()
                 return False
 
     def check_playback_status(self):

@@ -7,7 +7,7 @@ set -e  # Exit on error
 REAL_USER=${SUDO_USER:-$USER}
 REAL_HOME=$(eval echo ~$REAL_USER)
 INSTALL_DIR="$REAL_HOME/.quran-player"
-SERVICE_FILE="/etc/systemd/system/quran-player.service"
+SERVICE_FILE="$REAL_HOME/.config/systemd/user/quran-player.service"
 DESKTOP_FILE="$REAL_HOME/.local/share/applications/quran-player.desktop"
 
 # Colors
@@ -29,19 +29,23 @@ install_dependencies() {
     echo -e "${GREEN}Installing system dependencies (sudo required)...${NC}"
 
     if command -v apt &> /dev/null; then
-        sudo apt update
         sudo apt install -y \
             python3-venv \
             python3-pip \
             python3-tk \
             feh \
             ffmpeg
+        # Add user to audio group
+        sudo usermod -aG audio $REAL_USER
     elif command -v pacman &> /dev/null; then
         sudo pacman -Sy --noconfirm \
             python \
             tk \
             feh \
             ffmpeg
+        # Add user to audio group
+        sudo usermod -aG audio $REAL_USER
+
     else
         echo -e "${RED}Unsupported package manager. Install dependencies manually.${NC}"
         exit 1
@@ -55,20 +59,20 @@ copy_application_files() {
     # Create install directory
     mkdir -p "$INSTALL_DIR"
 
-    # Copy core files
-    cp -v quran_player.py quran_gui.py quran_search.py  requirements.txt arabic_topng.py "$INSTALL_DIR/"
+    ## Copy core files
+    cp -v quran_player.py quran_gui.py quran_search.py  requirements.txt arabic_topng.py arabic-font.ttf "$INSTALL_DIR/"
 
     # Copy assets
-    cp -rv quran-text "$INSTALL_DIR/"
-    [ -f icon.png ] && cp -v icon.png "$INSTALL_DIR/"
-    [ -f default_config.ini ] && cp -v default_config.ini "$INSTALL_DIR/"
+    #cp -rv quran-text "$INSTALL_DIR/"
+    #[ -f icon.png ] && cp -v icon.png "$INSTALL_DIR/"
+    #[ -f default_config.ini ] && cp -v default_config.ini "$INSTALL_DIR/"
 
-    # Copy audio samples if exists
-    if [ -d "audio" ]; then
-        cp -rv audio "$INSTALL_DIR/"
-    else
-        echo -e "${YELLOW}No audio files found. Place them in $INSTALL_DIR/audio later.${NC}"
-    fi
+    ## Copy audio samples if exists
+    #if [ -d "audio" ]; then
+    #    cp -rv audio "$INSTALL_DIR/"
+    #else
+    #    echo -e "${YELLOW}No audio files found. Place them in $INSTALL_DIR/audio later.${NC}"
+    #fi
 }
 # Create virtual environment
 create_venv() {
@@ -98,24 +102,35 @@ create_config() {
 # Install systemd service
 install_service() {
     echo -e "${GREEN}Installing system service...${NC}"
-    sudo tee "$SERVICE_FILE" > /dev/null <<EOF
+    mkdir -p "$REAL_HOME/.config/systemd/user"
+tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=Quran Player Daemon
-After=network.target
+After=network.target sound.target
 
 [Service]
 Type=simple
 User=$REAL_USER
-WorkingDirectory=$INSTALL_DIR
+Environment=XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER)
+Environment=PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
+ExecStartPre=/bin/bash -c 'until [ -S ${XDG_RUNTIME_DIR}/pulse/native ]; do sleep 1; done'
 ExecStart=$INSTALL_DIR/env/bin/python $INSTALL_DIR/quran_player.py start
 Restart=on-failure
+RestartSec=5
+
+# Audio permissions
+SupplementaryGroups=audio
+
+# Resource limits
+LimitNOFILE=65536
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 EOF
 
-    sudo systemctl daemon-reload
-    sudo systemctl enable quran-player.service
+    systemctl --user daemon-reload
+    systemctl --user enable quran-player.service
+    loginctl enable-linger $REAL_USER 
 }
 
 # Create desktop entry
@@ -149,14 +164,14 @@ EOF
 
 # Main installation
 main_install() {
-    install_dependencies
+    #install_dependencies
     copy_application_files
-    create_venv
-    install_python_deps
-    create_config
-    install_service
-    create_cli_wrapper
-    create_desktop_entry
+    #create_venv
+    #install_python_deps
+    #create_config
+    #install_service
+    #create_cli_wrapper
+    #create_desktop_entry
     echo -e "\n${GREEN}Installation complete!${NC}"
     echo -e "Use: quran-player [command] or launch from applications menu"
 }

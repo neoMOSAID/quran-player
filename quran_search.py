@@ -57,6 +57,9 @@ def set_layout(layout):
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
 
+def get_chapter_name(chapters,surah):
+    return chapters[surah - 1] if surah <= len(chapters) else 'Surah'
+
 def command_line_mode(surah, start_ayah, end_ayah, uthmani, simplified, chapters):
     uthmani_output = []
     simplified_output = []
