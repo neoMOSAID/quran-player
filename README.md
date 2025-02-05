@@ -1,7 +1,7 @@
 ```markdown
 # Quran Player 
 
-![Project Logo](icon.png)
+[Project Logo](icon.png)
 
 A cross-platform Quran playback system with synchronized visual display
 
@@ -136,5 +136,5 @@ GNU General Public License v3.0 - See [LICENSE](LICENSE)
 For help and support:
 - [Documentation Wiki](https://github.com/neoMOSAID/quran-player/wiki)
 - [Issues Tracker](https://github.com/neoMOSAID/quran-player/issues)
-- Email: support@mosaid.xyz
+- Email: mail@mosaid.xyz
 ```
