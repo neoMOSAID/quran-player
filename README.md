@@ -1,4 +1,3 @@
-```markdown
 # Quran Player 
 
 ![Project Logo](https://raw.githubusercontent.com/neoMOSAID/quran-player/main/icon.png)
@@ -138,4 +137,3 @@ For help and support:
 - [Documentation Wiki](https://github.com/neoMOSAID/quran-player/wiki)
 - [Issues Tracker](https://github.com/neoMOSAID/quran-player/issues)
 - Email: mail@mosaid.xyz
-```
