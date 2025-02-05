@@ -1,0 +1,64 @@
+.TH QURAN-DAEMON 1 "2024-03-20" "v1.3.0" "Quran Player Manual"
+.SH NAME
+quran-daemon \- Quran audio playback daemon with visual display
+.SH SYNOPSIS
+.B quran-daemon
+[\fIcommand\fR] [\fIarguments\fR]
+.SH DESCRIPTION
+A system service for Quranic verse playback with synchronized Arabic text display. Manages audio playback and maintains persistent state between sessions.
+.SH COMMANDS
+.TP
+.B start
+Start the daemon
+.TP
+.B stop
+Stop the daemon
+.TP
+.B play
+Resume playback
+.TP
+.B pause
+Pause playback
+.TP
+.B toggle
+Toggle play/pause state
+.TP
+.B next
+Play next verse
+.TP
+.B prev
+Play previous verse
+.TP
+.B load \fIsurah:ayah\fR
+Load specific verse (e.g. 2:255)
+.TP
+.B status
+Show current playback status
+.TP
+.B config
+Generate default configuration
+.TP
+.B cleanup
+Remove orphaned runtime files
+.TP
+.B help
+Show help message
+.TP
+.B about
+Display program information
+.SH FILES
+.TP
+.I ~/.config/quran-player/config.ini
+Configuration file
+.TP
+.I ~/.config/quran-player/playback_state.ini
+Persistent playback state
+.SH AUTHOR
+MOSAID Radouan <mail@mosaid.xyz>
+.SH REPORTING BUGS
+https://github.com/neoMOSAID/quran-player/issues
+.SH COPYRIGHT
+GPLv3 License. See /usr/share/common-licenses/GPL-3
+.SH SEE ALSO
+Website: https://mosaid.xyz/quran-player
+GitHub: https://github.com/neoMOSAID/quran-player

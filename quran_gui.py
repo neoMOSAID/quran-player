@@ -15,7 +15,7 @@ import signal
 import arabic_reshaper
 from bidi.algorithm import get_display
 
-from quran_player import USER_CONFIG_FILE
+from quran_player import USER_CONFIG_FILE, about
 import quran_search
 
 
@@ -41,7 +41,8 @@ class QuranController:
         self.daemon_process = None
         self.polling_thread = None
         self.running = True
-        self.daemon_stopped = True 
+        self.daemon_stopped = False 
+        self.tray_thread = None  # Add this line
 
         self.create_gui()
         self.start_status_poller()
@@ -130,32 +131,41 @@ class QuranController:
 
     def update_status(self):
         """Update the status label and buttons"""
-        daemon_running = self.is_daemon_running()
-        
-        # Update stop/start button
-        if daemon_running:
-            self.stop_button.config(text="Stop Daemon")
-            self.update_status_bar("Daemon is running.")
-        else:
-            self.stop_button.config(text="Start Daemon")
-            self.update_status_bar("Daemon is not running.", error=True)
+        try:
+            if time.time() - getattr(self, '_last_update', 0) < 1:
+                return
+            self._last_update = time.time()
 
-        response = self.send_command("status")
-        if response and response.startswith("STATUS"):
-            parts = response.split("|")
-            if len(parts) == 4:
-                self.current_state = {
-                    "surah": int(parts[1]),
-                    "ayah": int(parts[2]),
-                    "paused": parts[3] == "PAUSED"
-                }
-                surah_name = quran_search.get_chapter_name(quran_search.chapters,self.current_state['surah'])
-                reshaped_text = arabic_reshaper.reshape(surah_name)  # Fix Arabic letter shaping
-                bidi_text = get_display(reshaped_text)
-                status_text = f"{self.current_state['ayah']} : {bidi_text}" 
-                self.status_label.config(text=status_text)
-                #self.play_button.config(state=tk.NORMAL ) # if self.current_state['paused'] else tk.DISABLED
-                #self.pause_button.config(state=tk.NORMAL ) # if not self.current_state['paused'] else tk.DISABLED
+            daemon_running = self.is_daemon_running()
+            
+            # Update stop/start button
+            if daemon_running:
+                self.stop_button.config(text="Stop Daemon")
+                self.update_status_bar("Daemon is running.")
+            else:
+                try:
+                    self.stop_button.config(text="Start Daemon")
+                    self.update_status_bar("Daemon is not running.", error=True)
+                except Exception as e:
+                    pass
+
+            response = self.send_command("status")
+            if response and response.startswith("STATUS"):
+                parts = response.split("|")
+                if len(parts) == 4:
+                    self.current_state = {
+                        "surah": int(parts[1]),
+                        "ayah": int(parts[2]),
+                        "paused": parts[3] == "PAUSED"
+                    }
+                    surah_name = quran_search.get_chapter_name(quran_search.chapters, self.current_state['surah'])
+                    reshaped_text = arabic_reshaper.reshape(surah_name)
+                    bidi_text = get_display(reshaped_text)
+                    status_text = f"{self.current_state['ayah']} : {bidi_text}" 
+                    self.status_label.config(text=status_text)
+        except Exception as e:
+            print(f"Status update error: {str(e)}")
+
 
     def update_status_bar(self, message, error=False):
         """Update the status bar with a message"""
@@ -181,6 +191,8 @@ class QuranController:
         
         image = Image.open(ICON_FILE)
         self.tray_icon = pystray.Icon("quran_player", image, "Quran Player", menu)
+
+        self.tray_icon._root = self.root  # Keep reference to main window
         
         # Add explicit left-click handler
         self.tray_icon._handler = {
@@ -343,7 +355,10 @@ class QuranController:
         """Poll daemon status in the background"""
         def poller():
             while self.running:
-                self.update_status()
+                try:
+                    self.update_status()
+                except Exception as e:
+                    print(f"Status poll error: {str(e)}")
                 time.sleep(1)
                 
         self.polling_thread = threading.Thread(target=poller, daemon=True)
@@ -355,25 +370,37 @@ class QuranController:
 
     def run(self):
         """Start the GUI and system tray"""
-        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+        self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
+        self.tray_thread.start()
+        self.root.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
         self.root.mainloop()
 
     def exit_app(self):
         """Gracefully exit the application"""
         self.running = False
+        
+        # Kill subprocesses
+        if hasattr(self, 'daemon_process') and self.daemon_process:
+            self.daemon_process.terminate()
+        
+        # Stop tray icon
+        print("stopping tray icon")
         if self.tray_icon:
             self.tray_icon.stop()
+        
+        # Destroy window
+        print("destroy window")
         if self.root:
             self.root.destroy()
-        sys.exit(0)
+        
+        # Ensure process termination
+        print("exit all")
+        os._exit(0)  # Force exit all threads
 
     def show_window(self, icon=None, item=None):
         """Force window restoration"""
-        self.root.deiconify()
-        self.root.attributes('-topmost', 1)
-        self.root.focus_force()
-        self.root.attributes('-topmost', 0)
-        self.root.lift()
+        self.root.after(0, self.root.deiconify)
+        self.root.after(0, self.root.lift)
 
     def open_config(self):
         """Open config file with default editor using daemon"""
@@ -408,88 +435,107 @@ class QuranController:
         about_window.geometry("500x400")
         about_window.resizable(False, False)
         about_window.grab_set()  # Make it modal
-
-        # Configure styles
         about_window.configure(bg=BG_COLOR)
-        link_style = {'fg': ACCENT_COLOR, 'bg': BG_COLOR, 'cursor': 'hand2'}
 
-        # Header Section
-        header_frame = ttk.Frame(about_window)
-        header_frame.pack(pady=10, padx=20, fill='x')
+        # Main container with scrollbar
+        main_frame = ttk.Frame(about_window)
+        main_frame.pack(fill='both', expand=True)
 
+        canvas = tk.Canvas(main_frame, bg=BG_COLOR, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(
+                scrollregion=canvas.bbox("all")
+            )
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Header
+        header_frame = ttk.Frame(scrollable_frame)
+        header_frame.pack(pady=10, fill='x')
+        
         tk.Label(header_frame, 
                 text="Quran Player", 
                 font=('Helvetica', 16, 'bold'),
                 fg=FG_COLOR, bg=BG_COLOR).pack()
 
         # Author Info
-        author_frame = ttk.Frame(about_window)
-        author_frame.pack(pady=5, fill='x')
-
-        tk.Label(author_frame, 
+        tk.Label(scrollable_frame, 
                 text="Author: MOSAID Radouan", 
-                fg=FG_COLOR, bg=BG_COLOR).pack()
+                fg=FG_COLOR, bg=BG_COLOR).pack(pady=5)
 
         # Clickable Links
         def open_url(url):
-            import webbrowser
             webbrowser.open(url)
 
-        links_frame = ttk.Frame(about_window)
-        links_frame.pack(pady=5, fill='x')
-
-        website = tk.Label(links_frame, text="Website: mosaid.xyz", **link_style)
+        links_frame = ttk.Frame(scrollable_frame)
+        links_frame.pack(pady=5)
+        
+        website = tk.Label(links_frame, 
+                        text="Website: mosaid.xyz", 
+                        fg=ACCENT_COLOR, bg=BG_COLOR,
+                        cursor='hand2')
         website.pack(side=tk.LEFT, padx=10)
         website.bind("<Button-1>", lambda e: open_url("https://mosaid.xyz"))
 
-        github = tk.Label(links_frame, text="GitHub", **link_style)
+        github = tk.Label(links_frame, 
+                        text="GitHub Repository", 
+                        fg=ACCENT_COLOR, bg=BG_COLOR,
+                        cursor='hand2')
         github.pack(side=tk.LEFT, padx=10)
         github.bind("<Button-1>", lambda e: open_url("https://github.com/neoMOSAID/quran-player"))
 
-        # Command Documentation
-        doc_frame = ttk.Frame(about_window)
-        doc_frame.pack(pady=10, padx=20, fill='both', expand=True)
+        # Command List
+        commands_frame = ttk.Frame(scrollable_frame)
+        commands_frame.pack(pady=10, padx=20, fill='x')
 
-        tk.Label(doc_frame, 
-                text="Supported Commands via command line:", 
+        tk.Label(commands_frame, 
+                text="Supported Commands:",
+                font=('Helvetica', 12, 'bold'),
                 fg=FG_COLOR, bg=BG_COLOR).pack(anchor='w')
 
-        text_area = tk.Text(doc_frame, 
-                        wrap=tk.WORD, 
-                        bg=BUTTON_BG, 
-                        fg=FG_COLOR,
-                        insertbackground=FG_COLOR,
-                        state=tk.DISABLED,
-                        padx=10,
-                        pady=10)
-        text_area.pack(fill='both', expand=True)
-
-        # Command list (update with your actual commands)
         commands = [
             ("play", "Resume playback of current verse"),
             ("pause", "Pause current playback"),
             ("next", "Play next verse"),
             ("prev", "Play previous verse"),
-            ("load [surah:ayah]", "Load specific verse (e.g. 'load 2:255')"),
+            ("load [surah:ayah]", "Load specific verse (e.g. '2:255')"),
             ("status", "Get current playback status"),
             ("config", "Create/update configuration file"),
-            ("about", "shows this about message"),
+            ("about", "Show this information"),
             ("stop", "Stop the daemon process")
         ]
 
-        text_area.config(state=tk.NORMAL)
         for cmd, desc in commands:
-            text_area.insert(tk.END, f"• {cmd}: ", ('bold',))
-            text_area.insert(tk.END, f"{desc}\n")
-        text_area.config(state=tk.DISABLED)
+            frame = ttk.Frame(commands_frame)
+            frame.pack(fill='x', pady=2)
+            
+            tk.Label(frame, text=f"• {cmd}:", 
+                    font=('Helvetica', 10, 'bold'),
+                    fg=FG_COLOR, bg=BG_COLOR).pack(side='left')
+            tk.Label(frame, text=desc,
+                    fg=FG_COLOR, bg=BG_COLOR).pack(side='left', padx=5)
 
-        # Configure text styles
-        text_area.tag_configure('bold', font=('Helvetica', 10, 'bold'))
-
-        # Close button
-        ttk.Button(about_window, 
+        # Close button (fixed at bottom)
+        button_frame = ttk.Frame(about_window)
+        button_frame.pack(side='bottom', pady=10)
+        
+        ttk.Button(button_frame, 
                 text="Close", 
-                command=about_window.destroy).pack(pady=10)
+                command=about_window.destroy).pack()
+
+        # Pack canvas and scrollbar
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Set minimum size for scroll region
+        scrollable_frame.update_idletasks()
+        canvas.config(scrollregion=canvas.bbox("all"))
 
 def command_line_interface():
     """Handle command-line arguments"""
@@ -500,9 +546,12 @@ def command_line_interface():
     args = parser.parse_args()
 
     if args.command:
-        controller = QuranController()
-        response = controller.send_command(f"{args.command} {' '.join(args.args)}")
-        print(response or "No response from daemon")
+        if args.command == "about":
+            about()
+        else:
+            controller = QuranController()
+            response = controller.send_command(f"{args.command} {' '.join(args.args)}")
+            print(response or "No response from daemon")
     else:
         controller = QuranController()
         controller.run()

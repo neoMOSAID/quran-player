@@ -157,20 +157,24 @@ except FileNotFoundError as e:
 
 def main():
     if len(sys.argv) > 1:
-        if len(sys.argv) < 3:
-            print("Usage: script.py surah_number ayah_number [end_ayah]")
-            sys.exit(1)
-        try:
+        if len(sys.argv) == 2:
             surah = int(sys.argv[1])
-            start_ayah = int(sys.argv[2])
-            end_ayah = start_ayah
-            if len(sys.argv) > 3:
-                end_ayah = int(sys.argv[3])
-            quran_text = command_line_mode(surah, start_ayah, end_ayah, uthmani, simplified, chapters)
-            print(quran_text)
-        except Exception as e:
-            print(f"Invalid arguments. Please provide numbers for surah and ayah   {str(e)}.")
-            sys.exit(1)
+            print(get_chapter_name(chapters,surah))
+        else:
+            if len(sys.argv) < 3:
+                print("Usage: script.py surah_number ayah_number [end_ayah]")
+                sys.exit(1)
+            try:
+                surah = int(sys.argv[1])
+                start_ayah = int(sys.argv[2])
+                end_ayah = start_ayah
+                if len(sys.argv) > 3:
+                    end_ayah = int(sys.argv[3])
+                quran_text = command_line_mode(surah, start_ayah, end_ayah, uthmani, simplified, chapters)
+                print(quran_text)
+            except Exception as e:
+                print(f"Invalid arguments. Please provide numbers for surah and ayah   {str(e)}.")
+                sys.exit(1)
     else:
         interactive_mode(uthmani, simplified, chapters)
 

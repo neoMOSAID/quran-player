@@ -1,13 +1,11 @@
 #!/bin/bash
-# install-quran-player.sh - Fixed user-home installation
-
-set -e  # Exit on error
+# install-quran-player.sh - User-space installation with CLI wrappers
 
 # Configuration
 REAL_USER=${SUDO_USER:-$USER}
 REAL_HOME=$(eval echo ~$REAL_USER)
 INSTALL_DIR="$REAL_HOME/.quran-player"
-SERVICE_FILE="$REAL_HOME/.config/systemd/user/quran-player.service"
+BIN_DIR="/usr/local/bin"
 DESKTOP_FILE="$REAL_HOME/.local/share/applications/quran-player.desktop"
 
 # Colors
@@ -20,7 +18,7 @@ NC='\033[0m' # No Color
 if [ "$(id -u)" -eq 0 ] && [ -z "$SUDO_USER" ]; then
     echo -e "${RED}Error: Do not run this script as root!${NC}"
     echo -e "Run as regular user:"
-    echo -e "  ./install-quran-player.sh"
+    echo -e "  ./install.sh"
     exit 1
 fi
 
@@ -28,24 +26,25 @@ fi
 install_dependencies() {
     echo -e "${GREEN}Installing system dependencies (sudo required)...${NC}"
 
+    # Check if user is in audio group
+    if ! groups $REAL_USER | grep -q '\baudio\b'; then
+        echo -e "${YELLOW}Adding user to audio group...${NC}"
+        sudo usermod -aG audio $REAL_USER
+    fi
+
     if command -v apt &> /dev/null; then
         sudo apt install -y \
             python3-venv \
             python3-pip \
             python3-tk \
             feh \
-            ffmpeg
-        # Add user to audio group
-        sudo usermod -aG audio $REAL_USER
+            pulseaudio-utils
     elif command -v pacman &> /dev/null; then
         sudo pacman -Sy --noconfirm \
             python \
             tk \
             feh \
-            ffmpeg
-        # Add user to audio group
-        sudo usermod -aG audio $REAL_USER
-
+            pulseaudio
     else
         echo -e "${RED}Unsupported package manager. Install dependencies manually.${NC}"
         exit 1
@@ -55,25 +54,18 @@ install_dependencies() {
 # Copy application files
 copy_application_files() {
     echo -e "${GREEN}Copying application files...${NC}"
-
-    # Create install directory
     mkdir -p "$INSTALL_DIR"
+    
+    # Core files
+    cp -v quran_player.py quran_gui.py quran_search.py arabic_topng.py \
+        requirements.txt arabic-font.ttf "$INSTALL_DIR/"
 
-    ## Copy core files
-    cp -v quran_player.py quran_gui.py quran_search.py  requirements.txt arabic_topng.py arabic-font.ttf "$INSTALL_DIR/"
-
-    # Copy assets
-    #cp -rv quran-text "$INSTALL_DIR/"
-    #[ -f icon.png ] && cp -v icon.png "$INSTALL_DIR/"
-    #[ -f default_config.ini ] && cp -v default_config.ini "$INSTALL_DIR/"
-
-    ## Copy audio samples if exists
-    #if [ -d "audio" ]; then
-    #    cp -rv audio "$INSTALL_DIR/"
-    #else
-    #    echo -e "${YELLOW}No audio files found. Place them in $INSTALL_DIR/audio later.${NC}"
-    #fi
+    # Assets
+    [ -f icon.png ] && cp -v icon.png "$INSTALL_DIR/"
+    [ -d "quran-text" ] && cp -rv quran-text "$INSTALL_DIR/"
+    [ -d "audio" ] && cp -rv audio "$INSTALL_DIR/"
 }
+
 # Create virtual environment
 create_venv() {
     echo -e "${GREEN}Creating Python virtual environment...${NC}"
@@ -85,52 +77,60 @@ install_python_deps() {
     echo -e "${GREEN}Installing Python packages...${NC}"
     source "$INSTALL_DIR/env/bin/activate"
     pip install -r "$INSTALL_DIR/requirements.txt"
+    deactivate
 }
 
-# Create config directory
-create_config() {
-    echo -e "${GREEN}Creating configuration...${NC}"
-    mkdir -p "$REAL_HOME/.config/quran-player"
-    [ -f default_config.ini ] && \
-        cp default_config.ini "$REAL_HOME/.config/quran-player/config.ini"
+create_cli_wrappers() {
+    echo -e "${GREEN}Creating command-line interfaces...${NC}"
 
-    if [ -n "$SUDO_USER" ]; then
-        sudo chown -R "$REAL_USER:$REAL_USER" "$REAL_HOME/.config/quran-player"
-    fi
-}
-
-# Install systemd service
-install_service() {
-    echo -e "${GREEN}Installing system service...${NC}"
-    mkdir -p "$REAL_HOME/.config/systemd/user"
-tee "$SERVICE_FILE" > /dev/null <<EOF
-[Unit]
-Description=Quran Player Daemon
-After=network.target sound.target
-
-[Service]
-Type=simple
-User=$REAL_USER
-Environment=XDG_RUNTIME_DIR=/run/user/$(id -u $REAL_USER)
-Environment=PULSE_SERVER=unix:${XDG_RUNTIME_DIR}/pulse/native
-ExecStartPre=/bin/bash -c 'until [ -S ${XDG_RUNTIME_DIR}/pulse/native ]; do sleep 1; done'
-ExecStart=$INSTALL_DIR/env/bin/python $INSTALL_DIR/quran_player.py start
-Restart=on-failure
-RestartSec=5
-
-# Audio permissions
-SupplementaryGroups=audio
-
-# Resource limits
-LimitNOFILE=65536
-
-[Install]
-WantedBy=default.target
+    # Daemon controller
+    sudo tee $BIN_DIR/quran-daemon > /dev/null <<EOF
+#!/bin/bash
+# Store PID in user-accessible location
+PID_FILE="\$HOME/.quran-player/.daemon_pid"
+case "\$1" in
+    start)
+        "$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/quran_player.py" start &
+        echo \$! > \$PID_FILE
+        ;;
+    stop)
+        response=\$("$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/quran_player.py" stop )
+        if echo "\$response" | grep 'not running' >/dev/null ; then
+            echo "not runnin"
+            else echo "\$response"
+        fi 
+        [ -f \$PID_FILE ] && kill -9 \$(cat \$PID_FILE) 2>/dev/null && rm \$PID_FILE
+        ;;
+    *)
+        "$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/quran_player.py" "\$@"
+        ;;
+esac
 EOF
 
-    systemctl --user daemon-reload
-    systemctl --user enable quran-player.service
-    loginctl enable-linger $REAL_USER 
+    # GUI launcher with proper process handling
+    sudo tee $BIN_DIR/quran-gui > /dev/null <<EOF
+#!/bin/bash
+# Store GUI PID for easy killing
+PID_FILE="\$HOME/.quran-player/.gui_pid"
+echo \$\$ > \$PID_FILE
+trap "rm \$PID_FILE" EXIT
+
+"$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/quran_gui.py" "\$@"
+EOF
+
+    # quran-search
+    sudo tee $BIN_DIR/quran-search > /dev/null <<EOF
+#!/bin/bash
+"$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/quran_search.py" \$@
+EOF
+
+    # arabic to png
+    sudo tee $BIN_DIR/arabic-topng > /dev/null <<EOF
+#!/bin/bash
+"$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/arabic_topng.py" \$@
+EOF
+
+    sudo chmod +x $BIN_DIR/quran-daemon $BIN_DIR/quran-gui $BIN_DIR/quran-search
 }
 
 # Create desktop entry
@@ -142,7 +142,7 @@ create_desktop_entry() {
 Version=1.0
 Name=Quran Player
 Comment=Interactive Quran Player
-Exec=$INSTALL_DIR/env/bin/python $INSTALL_DIR/quran_gui.py
+Exec=quran-gui
 Icon=$INSTALL_DIR/icon.png
 Terminal=false
 Type=Application
@@ -152,14 +152,13 @@ EOF
     update-desktop-database "$(dirname "$DESKTOP_FILE")"
 }
 
-# Create CLI wrapper
-create_cli_wrapper() {
-    echo -e "${GREEN}Creating command-line interface...${NC}"
-    sudo tee /usr/local/bin/quran-player > /dev/null <<EOF
-#!/bin/bash
-"$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/quran_gui.py" "\$@"
-EOF
-    sudo chmod +x /usr/local/bin/quran-player
+# In create_cli_wrappers()
+install_manpage() {
+    echo -e "${GREEN}Installing manpage...${NC}"
+    sudo mkdir -p /usr/local/share/man/man1
+    sudo cp quran-daemon.1 /usr/local/share/man/man1/
+    sudo gzip /usr/local/share/man/man1/quran-daemon.1
+    sudo mandb >/dev/null
 }
 
 # Main installation
@@ -168,22 +167,37 @@ main_install() {
     copy_application_files
     #create_venv
     #install_python_deps
-    #create_config
-    #install_service
-    #create_cli_wrapper
+    create_cli_wrappers
     #create_desktop_entry
+    install_manpage
+    
     echo -e "\n${GREEN}Installation complete!${NC}"
-    echo -e "Use: quran-player [command] or launch from applications menu"
+    echo -e "Usage:"
+    echo -e "  Start daemon:                quran-daemon start"
+    echo -e "  Control player directly:     quran-daemon [play|pause|next|prev|stop]"
+    echo -e "  Control player through gui:  quran-gui [play|pause|next|prev|stop]"
+    echo -e "  Launch GUI:                  quran-gui" 
+    echo -e "  Stop GUI:                    quran-gui stop"
 }
 
 # Uninstall
 uninstall() {
     echo -e "${RED}Uninstalling...${NC}"
-    sudo systemctl stop quran-player.service || true
-    sudo systemctl disable quran-player.service || true
-    sudo rm -f "$SERVICE_FILE"
-    sudo rm -f /usr/local/bin/quran-player
+    # Kill processes using stored PIDs
+    [ -f "$REAL_HOME/.quran-player/.daemon_pid" ] && kill -9 $(cat "$REAL_HOME/.quran-player/.daemon_pid") 2>/dev/null
+    [ -f "$REAL_HOME/.quran-player/.gui_pid" ] && kill -9 $(cat "$REAL_HOME/.quran-player/.gui_pid") 2>/dev/null
+    # Remove all files
+    echo "removing $BIN_DIR/quran-daemon"
+    sudo rm -f $BIN_DIR/quran-daemon
+    echo "removing $BIN_DIR/quran-gui"
+    sudo rm -f $BIN_DIR/quran-gui
+    echo "removing $BIN_DIR/quran-search"
+    sudo rm -f $BIN_DIR/quran-search
+    echo "removing $BIN_DIR/arabic-topng"
+    sudo rm -f $BIN_DIR/arabic-topng
+    echo "removing install dir  $INSTALL_DIR"
     rm -rf "$INSTALL_DIR"
+    echo "removing desktop file  $DESKTOP_FILE"
     rm -f "$DESKTOP_FILE"
     echo -e "${GREEN}Uninstallation complete!${NC}"
 }
@@ -194,7 +208,7 @@ case "$1" in
         uninstall
         ;;
     *)
+        set -e  # Exit on error
         main_install
         ;;
 esac
-

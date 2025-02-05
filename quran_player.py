@@ -1,3 +1,50 @@
+"""
+Quran Player Daemon - v1.3.0
+
+A system service for Quranic verse playback with synchronized visual display
+
+Features:
+- Verse-by-verse audio playback with auto-advance
+- Arabic text display with proper shaping and rendering
+- Persistent playback state across sessions
+- Configurable through ~/.config/quran-player/config.ini
+- System tray GUI controller
+- Cross-platform support (Linux/macOS/Windows)
+
+Website: https://mosaid.xyz/quran-player
+GitHub: https://github.com/neoMOSAID/quran-player
+Documentation: https://github.com/neoMOSAID/quran-player/wiki
+
+Usage:
+  quran-daemon [command] [arguments]
+
+Commands:
+  start     Start the daemon
+  stop      Stop the daemon
+  play      Resume playback
+  pause     Pause playback
+  toggle    Play/pause toggle
+  next      Next verse
+  prev      Previous verse
+  load      Load specific verse (e.g. 2:255)
+  status    Show current playback status
+  config    Generate default config
+  cleanup   Remove orphaned files
+  help      Show this help
+  about     Display program information
+
+Configuration:
+  Edit ~/.config/quran-player/config.ini to customize:
+  - Audio file locations
+  - Text display settings
+  - Logging preferences
+  - Image rendering options
+
+License: GPLv3
+Report bugs: https://github.com/neoMOSAID/quran-player/issues
+"""
+
+
 import os
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1' 
 import sys
@@ -79,18 +126,9 @@ class Daemon:
     def __init__(self):
         self.running = False
         self.audio_lock = threading.Lock()
-        self.valid_commands = {
-            "start": "SYSTEM",
-            "stop": "SYSTEM",
-            "cleanup": "SYSTEM",
-            "play": "PLAY",
-            "pause": "NAV",
-            "prev": "NAV",
-            "next": "NAV",
-            "load": "NAV",
-            "status": "INFO",
-            "config": "SYSTEM",
-        }
+        self.valid_commands =["play", "pause", "toggle", "stop", "load",
+                              "prev", "next","start","status", "config"]
+
         # Surah-ayah count mapping (index 0 unused, 1-114 are surah numbers)
         self.surah_ayat = [
             0,   # Index 0 (unused)
@@ -109,8 +147,11 @@ class Daemon:
         ]
 
         ensure_dirs()
+        
         self.config = self.load_config()
 
+        self.view_image = self.config.getboolean('image', 'ENABLE', fallback=True)
+        
         # State management
         self.current_surah = 1
         self.current_ayah = 1
@@ -208,7 +249,8 @@ class Daemon:
                 "FILES_DIRECTORY": os.path.join(USER_CONFIG_DIR, "sample"),
             },
             "image": {
-                "default_resolution": "1240x170",
+                "ENABLE": "yes",
+                "DEFAULT_RESOLUTION": "1240x170",
                 "FONT_FILE": os.path.join(USER_CONFIG_DIR, "arabic-font.ttf"),
                 "FONT_SIZE": 48,
                 "IMAGE_WIDTH": 1240,
@@ -236,7 +278,7 @@ class Daemon:
                     validated_value = value
                 else:
                     raise ValueError("Invalid files directory.")
-            elif key == "default_resolution":
+            elif key == "DEFAULT_RESOLUTION":
                 # Validate resolution format (e.g., '1920x1080')
                 parts = value.split('x')
                 if len(parts) != 2 or not all(part.isdigit() for part in parts):
@@ -248,6 +290,18 @@ class Daemon:
                 validated_value = int(value)
                 if validated_value <= 0:
                     raise ValueError("Must be positive.")
+            elif key == "ENABLE":
+                # Accept both string and boolean representations
+                if isinstance(value, str):
+                    value = value.lower()
+                    if value in {'yes', 'true', '1', 'on'}:
+                        validated_value = True
+                    elif value in {'no', 'false', '0', 'off'}:
+                        validated_value = False
+                    else:
+                        raise ValueError("Invalid boolean value")
+                else:
+                    validated_value = bool(value)
             else:
                 # For keys without specific validation, keep as-is
                 validated_value = value
@@ -309,24 +363,6 @@ class Daemon:
         self.log_action("SYSTEM", f"Default config generated at {USER_CONFIG_FILE}")
         return True
 
-    def handle_command(self, command):
-        """Process a received command using dedicated handler methods."""
-        if command not in self.valid_commands:
-            self.log_action("ERROR", f"Unknown command: {command}")
-            return
-
-        # Get the handler method using naming convention
-        handler_name = f"handle_{command}"
-        handler = getattr(self, handler_name, None)
-
-        if not handler:
-            self.log_action("ERROR", f"No handler implemented for {command}")
-            return
-
-        # Execute the command with proper logging
-        self.log_action(self.valid_commands[command], f"Executing command: {command}")
-        handler()
-
     def handle_client(self, conn):
         try:
             data = conn.recv(1024).decode().strip()
@@ -341,29 +377,38 @@ class Daemon:
             # Handle status command first
             if command == "status":
                 status_response = self.handle_status()
-                conn.sendall(status_response.encode() + b"\n")
-                return  
+                try:
+                    conn.sendall(status_response.encode() + b"\n")
+                except BrokenPipeError:
+                    self.log_action("WARNING", "Client disconnected before receiving status")
+                return    
             
             if command == "load":
                 if not args:
                     conn.sendall(b"ERROR: Missing surah:ayah\n")
                     return
                 success = self.handle_load(args)
-            elif command in ["play", "pause", "stop", "prev", "next","start","status", "config"]:
+            elif command in self.valid_commands: 
                 success = getattr(self, f"handle_{command}")()
             else:
                 conn.sendall(b"ERROR: Unknown command\n")
                 return
 
             # Send OK/ERROR based on success
-            response = b"OK\n" if success else b"ERROR: Command failed\n"
-            conn.sendall(response)
+            # Send response with error handling
+            try:
+                response = b"OK\n" if success else b"ERROR: Command failed\n"
+                conn.sendall(response)
+            except (BrokenPipeError, ConnectionResetError):
+                self.log_action("WARNING", "Client disconnected before receiving response")
 
         except Exception as e:
             self.log_action("ERROR", f"Client error: {str(e)}")
-            conn.sendall(f"ERROR: {str(e)}\n".encode())
         finally:
-            conn.close()
+            try:
+                conn.close()
+            except:
+                pass
 
 
     def handle_start(self):
@@ -402,13 +447,14 @@ class Daemon:
             os.remove(SOCKET_FILE)
 
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  
         server.bind(SOCKET_FILE)
         server.listen(5)
         server.settimeout(1)  # Add timeout to break accept() blocking
 
         self.log_action("SYSTEM", "Daemon started. Listening for commands.")
         self.running = True
-
+        print("OK")
         try:
             while self.running:
                 try:
@@ -466,6 +512,7 @@ class Daemon:
         except Exception as e:
             self.log_action("ERROR", f"Play failed: {str(e)}")
             return False
+        
     def handle_status(self):
         """Return current playback status in pipe-separated format"""
         status = "PAUSED" if self.is_paused else "PLAYING"
@@ -487,6 +534,21 @@ class Daemon:
         except pygame.error as e:
             self.log_action("ERROR", f"Pause failed: {str(e)}")
             return False
+        
+    def handle_toggle(self):
+        """Toggle play/pause state"""
+        try:
+            if pygame.mixer.music.get_busy() and not self.is_paused:
+                return self.handle_pause()
+            else:
+                return self.handle_play()
+        except pygame.error as e:
+            self.log_action("ERROR", f"Toggle failed: {str(e)}")
+            return False
+        except Exception as e:
+            self.log_action("ERROR", f"Toggle error: {str(e)}")
+            return False
+
 
     def handle_prev(self):
         """Previous ayah with boundary checks"""
@@ -583,7 +645,8 @@ class Daemon:
             try:
                 quran_text = quran_search.command_line_mode(self.current_surah, self.current_ayah, self.current_ayah,
                  quran_search.uthmani, quran_search.simplified, quran_search.chapters)
-                self.show_verse_image(quran_text)
+                if self.view_image:
+                    self.show_verse_image(quran_text)
                 
                 pygame.mixer.music.load(audio_path)
                 pygame.mixer.music.play()
@@ -602,22 +665,30 @@ class Daemon:
             time.sleep(0.5)
         self.handle_playback_end()
 
-    def reset_file_not_found(self,ayah=None,surah=None):
+    def reset_file_not_found(self, ayah=None, surah=None):
         if ayah:
             self.current_ayah = ayah
+
         next_path = self.get_audio_path()
-        if not next_path or not os.path.exists(next_path):
+
+        if next_path and os.path.exists(next_path):
+            return next_path  # If file exists, return it immediately
+
+        # If surah is provided, attempt a reset
+        if surah is not None:
             self.log_action("WARNING", "Next file missing, resetting")
             self.current_ayah = 1
-            self.current_surah = 1
-            #self.current_surah = 1 if surah > 114 else surah
+            self.current_surah = 1 if surah > 114 else surah
             next_path = self.get_audio_path()
-            
-            if not next_path or not os.path.exists(next_path):
-                self.log_action("ERROR", "Critical failure: Base file missing")
-                self.playback_active = False
-                return 
-        return next_path
+
+            if next_path and os.path.exists(next_path):
+                return next_path  # Return new path if it now exists
+
+            self.log_action("ERROR", "Critical failure: Base file missing")
+            self.playback_active = False
+
+        return None  # Return None explicitly if no valid path is found
+
 
     def handle_playback_end(self):
         """Handle track completion and play next"""
@@ -625,8 +696,12 @@ class Daemon:
             # Increment state
             new_ayah = self.current_ayah + 1
             new_surah = self.current_surah
+
+            # if there are no more verses in current surah , increment it 
+            if not self.reset_file_not_found(ayah=new_ayah):
+                new_surah = self.current_surah + 1
             
-            # Validate next file before committing
+            # Validate next file , reset if not found
             self.reset_file_not_found(ayah=new_ayah,surah=new_surah)
 
             # Commit state
@@ -739,6 +814,56 @@ class Daemon:
         self.log_action("IMAGE", "Launched new feh window")
 
 
+def about():
+    """Generate formatted about information with command documentation"""
+    about_info = f"""
+    ┌──────────────────────────────────────────────────────┐
+    │                  Quran Player Daemon                 │
+    │                  Version 1.2.0                       │
+    └──────────────────────────────────────────────────────┘
+
+    A robust daemon for Quran audio playback with synchronized 
+    visual display. Features include:
+    
+    • Verse-by-verse playback with auto-advance
+    • Display current verse in feh
+    • Cross-platform audio backend support
+    • Persistent playback state
+    • Arabic text rendering with proper shaping
+    • Configurable through ~/.config/quran-player/config.ini
+    
+    ┌──────────────────────────────────────────────────────┐
+    │                     Project Links                    │
+    └──────────────────────────────────────────────────────┘
+    
+    \033]8;;https://quran-player.example.com\a🌐 Website\033]8;;\a
+    \033]8;;https://github.com/user/quran-player\a🐙 GitHub Repository\033]8;;\a
+    
+    ┌──────────────────────────────────────────────────────┐
+    │                 Supported Commands                   │
+    └──────────────────────────────────────────────────────┘
+    """
+
+    commands = [
+        ("start", "Initialize the daemon process"),
+        ("stop", "Terminate the daemon"),
+        ("play", "Resume audio playback"),
+        ("pause", "Pause current playback"),
+        ("prev", "Previous verse"),
+        ("next", "Next verse"),
+        ("load <surah:ayah>", "Load specific verse"),
+        ("status", "Get playback status"),
+        ("cleanup", "Clean up orphaned runtime files"),
+        ("config", "Generate and override user config file"),
+        ("help", "Show this information"),
+        ("about", "Show this information")
+    ]
+
+    cmd_list = "\n".join([f"  {cmd[0]:<18} {cmd[1]}" for cmd in commands])
+    
+    print(f"{about_info}\n{cmd_list}\n\n    © 2024 Quran Player Project - GPLv3 License")
+    return True
+
 
 def is_daemon_running():
     """Verify daemon is actually running with PID and process name"""
@@ -779,7 +904,7 @@ def cleanup_orphaned_files():
 
 
 def print_usage():
-    print("Usage: python3 quran-player.py <command>")
+    print("Usage: quran-daemon <command>")
     print("Commands:")
     print("  start   - Start the daemon")
     print("  stop    - Stop the daemon")
@@ -788,7 +913,10 @@ def print_usage():
     print("  prev    - Play previous track")
     print("  next    - Play next track")
     print("  load <surah> <ayah>    - Load track")
-    print("  config  - Generate default config file")
+    print("  cleanup - Clean up files")
+    print("  about   - Print info about this daemon")
+    print("  help    - Print info about this daemon")
+    print("  config  - Generate default config  and override user config file")
 
 if __name__ == "__main__":
     os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
@@ -810,13 +938,15 @@ if __name__ == "__main__":
         daemon.handle_start()
     elif command == "cleanup":
         cleanup_orphaned_files()
+    elif command == "about" or command == "help":
+        about()
     elif command == "config":
         daemon.handle_config()
         print(f"Generated config at {USER_CONFIG_FILE}")
         
-    elif command in ["stop", "play", "pause", "prev", "next", "load","status"]:
+    elif command in daemon.valid_commands:
         if not is_daemon_running():
-            print(f"Error: Start daemon first with: {sys.argv[0]} start")
+            print(f"Error: Daemon not running, Start it first with: quran-daemon start")
             sys.exit(1)
 
         try:
