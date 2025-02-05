@@ -75,6 +75,7 @@ USER_CONFIG_DIR = os.path.expanduser("~/.config/quran-player")
 
 # daemon files
 LOG_FILE = os.path.join(CONTROL_DIR, "daemon.log")
+CILENT_LOG_FILE = os.path.join(CONTROL_DIR, "daemon-client.log")
 SOCKET_FILE = os.path.join(CONTROL_DIR, "daemon.sock")
 PID_FILE = os.path.join(CONTROL_DIR, "daemon.pid")
 LOCK_FILE = os.path.join(CONTROL_DIR, "daemon.lock")
@@ -210,9 +211,8 @@ class Daemon:
         pygame.mixer.quit()
         time.sleep(0.5)  # Important: Give system time to release resources
         if not self.init_audio():
+            self.log_action("ERROR", "Failed to recover audio after crash")
             print("Failed to recover audio after crash")
-
-        # Call this after catching exceptions in your playback loop
 
     def log_action(self, flag, msg):
         """Log an action with timestamp, PID, method, flag, and message."""
@@ -220,8 +220,12 @@ class Daemon:
         timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         pid = os.getpid()
         log_entry = f"{timestamp}|{pid}|{method}|{flag}|{msg}\n"
-        with open(LOG_FILE, "a") as log:
-            log.write(log_entry)
+        if method == 'handle_client' and flag == "ERROR":
+            with open(CILENT_LOG_FILE, "a") as log:
+                log.write(log_entry)
+        else:
+            with open(LOG_FILE, "a") as log:
+                log.write(log_entry)
         #print(log_entry.strip())
 
     def verify_audio_config(self):

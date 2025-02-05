@@ -1,24 +1,25 @@
-.TH QURAN-DAEMON 1 "2024-03-20" "v1.3.0" "Quran Player Manual"
+.\" Manpage for quran-daemon
+.TH QURAN\-DAEMON 1 "2024-06-20" "1.3.0" "Quran Player Manual"
 .SH NAME
-quran-daemon \- Quran audio playback daemon with visual display
+quran-daemon \- Quranic verse playback daemon with synchronized display
 .SH SYNOPSIS
 .B quran-daemon
-[\fIcommand\fR] [\fIarguments\fR]
+[\fICOMMAND\fP] [\fIARGUMENTS\fP]
 .SH DESCRIPTION
-A system service for Quranic verse playback with synchronized Arabic text display. Manages audio playback and maintains persistent state between sessions.
+A system service for continuous Quranic audio playback with synchronized Arabic text display. Runs in the background with system tray control.
 .SH COMMANDS
 .TP
 .B start
-Start the daemon
+Start the daemon (creates control files in ~/.config/quran-player)
 .TP
 .B stop
-Stop the daemon
+Stop the running daemon
 .TP
 .B play
-Resume playback
+Resume paused playback
 .TP
 .B pause
-Pause playback
+Pause current playback
 .TP
 .B toggle
 Toggle play/pause state
@@ -29,36 +30,62 @@ Play next verse
 .B prev
 Play previous verse
 .TP
-.B load \fIsurah:ayah\fR
+.B load \fIsurah:ayah\fP
 Load specific verse (e.g. 2:255)
 .TP
 .B status
 Show current playback status
 .TP
 .B config
-Generate default configuration
+Generate default config file
 .TP
 .B cleanup
-Remove orphaned runtime files
+Remove orphaned control files
 .TP
 .B help
-Show help message
+Show full help text
 .TP
 .B about
 Display program information
+.SH CONFIGURATION
+Configuration file: ~/.config/quran-player/config.ini
+.PP
+Key settings:
+\- audio_file_locations
+\- text_display_settings
+\- logging_preferences
+\- image_rendering_options
 .SH FILES
 .TP
-.I ~/.config/quran-player/config.ini
-Configuration file
+.B ~/.config/quran-player/
+User configuration directory containing:
+.RS
+- config.ini - Main configuration
+- playback_state.ini - Current verse position
+- sample/ - Default audio files
+.RE
 .TP
-.I ~/.config/quran-player/playback_state.ini
-Persistent playback state
-.SH AUTHOR
-MOSAID Radouan <mail@mosaid.xyz>
-.SH REPORTING BUGS
-https://github.com/neoMOSAID/quran-player/issues
-.SH COPYRIGHT
-GPLv3 License. See /usr/share/common-licenses/GPL-3
+.B /tmp/quran_verse.png
+Currently displayed verse image
+.SH EXAMPLES
+Start the daemon:
+.PP
+.B quran-daemon start
+.PP
+Play next verse:
+.PP
+.B quran-daemon next
+.PP
+Load Al-Baqarah 255:
+.PP
+.B quran-daemon load 2:255
 .SH SEE ALSO
-Website: https://mosaid.xyz/quran-player
-GitHub: https://github.com/neoMOSAID/quran-player
+Project website: https://mosaid.xyz/quran-player
+.br
+GitHub repo: https://github.com/neoMOSAID/quran-player
+.SH BUGS
+Report issues at: https://github.com/neoMOSAID/quran-player/issues
+.SH AUTHOR
+MOSAID Radouan
+.SH LICENSE
+GPLv3

@@ -323,7 +323,7 @@ class QuranController:
         )
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)  # Add bottom margin   , pady=(0, 2)
 
-        self.root.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
+        #self.root.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
 
     def handle_exit(self, signum=None, frame=None):
         """Handle Ctrl+C and other exits"""
@@ -367,12 +367,13 @@ class QuranController:
     def minimize_to_tray(self):
         """Minimize to system tray"""
         self.root.withdraw()
+        self.tray_icon.run_detached()  # Run the system tray icon in a separate thread
 
     def run(self):
         """Start the GUI and system tray"""
-        self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
-        self.tray_thread.start()
-        self.root.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
+        #self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
+        #self.tray_thread.start()
+        #self.root.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
         self.root.mainloop()
 
     def exit_app(self):

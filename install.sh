@@ -167,9 +167,9 @@ main_install() {
     copy_application_files
     #create_venv
     #install_python_deps
-    create_cli_wrappers
+    #create_cli_wrappers
     #create_desktop_entry
-    install_manpage
+    #install_manpage
     
     echo -e "\n${GREEN}Installation complete!${NC}"
     echo -e "Usage:"

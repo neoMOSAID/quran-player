@@ -1,15 +1,30 @@
+"""
+Quran Search and Display Tool
+
+This script provides both command-line and interactive modes to search and display Quranic verses.
+It supports two text versions (Uthmani and Simplified) and handles Arabic text input with right-to-left layout.
+
+Features:
+- Dark theme for interactive mode
+- RTL text input support
+- Cross-version search capabilities
+- Keyboard layout auto-switching for Arabic input
+
+Usage:
+    Command-line mode: python script.py <surah> <start_ayah> [end_ayah]
+    Interactive mode: python script.py
+"""
+
 import sys
 import os
 import subprocess
-import tkinter as tk
-from tkinter import simpledialog
+
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 USER_CONFIG_DIR = os.path.expanduser("~/.config/quran-player")
 SIMPLIFIED_OUT_FILE = os.path.join(USER_CONFIG_DIR, "search_result_simplified.txt") 
 UTHMANI_OUT_FILE = os.path.join(USER_CONFIG_DIR, "search_result_uthmani.txt") 
-
-
+ 
 def read_chapters(filename):
     with open(filename, 'r', encoding='utf-8') as f:
         return [line.strip() for line in f]
@@ -70,7 +85,7 @@ def command_line_mode(surah, start_ayah, end_ayah, uthmani, simplified, chapters
             print(f"Warning: Ayah {surah}:{ayah_num} not found.", file=sys.stderr)
             continue
             
-        uthmani_text, uthmani_full = uthmani[key]
+        uthmani_text, _ = uthmani[key]
         simplified_text, _ = simplified[key]
         chapter_name = chapters[surah - 1] if surah <= len(chapters) else 'Unknown'
         
@@ -87,34 +102,57 @@ def command_line_mode(surah, start_ayah, end_ayah, uthmani, simplified, chapters
         with open(SIMPLIFIED_OUT_FILE, 'w', encoding='utf-8') as f:
             f.write('\n'.join(simplified_output))
 
-    return f"{uthmani_text} ({chapter_name} {ayah_num})"
+    return '\n'.join(uthmani_output)
+
+
+
 
 def interactive_mode(uthmani, simplified, chapters):
+    """Handle interactive mode using yad dialogs"""
     original_layout = get_current_layout()
-    
-    # Create GUI dialog
-    root = tk.Tk()
-    root.withdraw()
     
     try:
         set_layout('ara')
-        search_term = simpledialog.askstring("Quran Search", "Enter Arabic search term:")
+        
+        # Create RTL search dialog
+        yad_cmd = [
+            'yad', '--entry',
+            '--title=بحث في القرآن',
+            '--text=أدخل كلمة البحث:',
+            '--entry-text=',
+            '--width=400',
+            '--height=120',
+            '--rtl',
+            '--text-align=right',
+            '--fontname=Amiri 14',
+            '--window-icon=system-search'
+        ]
+        
+        result = subprocess.run(
+            yad_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding='utf-8'
+        )
+        
+        if result.returncode != 0:
+            return
+            
+        search_term = result.stdout.strip()
+        
     finally:
         if original_layout:
             set_layout(original_layout)
-        root.destroy()
 
     if not search_term:
-        print("No search term entered.")
         return
 
+    # Perform search
     matches = []
     for key in simplified:
-        parts = simplified[key].split('|')
-        if len(parts) < 3:
-            continue
-        text = '|'.join(parts[2:])
-        if search_term in text:
+        simplified_text, _ = simplified[key]
+        if search_term in simplified_text:
             matches.append(key)
     
     matches.sort(key=lambda x: (x[0], x[1]))
@@ -146,13 +184,11 @@ def interactive_mode(uthmani, simplified, chapters):
         with open(SIMPLIFIED_OUT_FILE, 'w', encoding='utf-8') as f:
             f.write('\n'.join(simplified_results))
 
-try:
-    chapters = read_chapters(os.path.join(SCRIPT_DIR, "quran-text/chapters.txt"))
-    uthmani = read_uthmani(os.path.join(SCRIPT_DIR, "quran-text/uthmani.txt"))   
-    simplified = read_simplified(os.path.join(SCRIPT_DIR, "quran-text/simplified.txt"))   
-except FileNotFoundError as e:
-    print(f"Error: Missing file {e.filename}", file=sys.stderr)
-    sys.exit(1)
+
+
+chapters = read_chapters(os.path.join(SCRIPT_DIR, "quran-text/chapters.txt"))
+uthmani = read_uthmani(os.path.join(SCRIPT_DIR, "quran-text/uthmani.txt"))   
+simplified = read_simplified(os.path.join(SCRIPT_DIR, "quran-text/simplified.txt"))  
 
 
 def main():
