@@ -1,7 +1,8 @@
 ```markdown
 # Quran Player 
 
-[Project Logo](icon.png)
+![Project Logo](https://raw.githubusercontent.com/neoMOSAID/quran-player/main/icon.png)
+
 
 A cross-platform Quran playback system with synchronized visual display
 
