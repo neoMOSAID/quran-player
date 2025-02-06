@@ -7,7 +7,6 @@ A cross-platform Quran playback system with synchronized visual display
 
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-green)](https://python.org)
-[![Website](https://img.shields.io/badge/Python-3.8%2B-green)](https://python.org)
 [![Website](https://img.shields.io/badge/Website-mosaid.xyz-blue)](https://www.mosaid.xyz/article/278/how-to-install-and-use-quran-player-on-linux-macos-and-windows/)
 
 ## Features
@@ -136,6 +135,7 @@ GNU General Public License v3.0 - See [LICENSE](LICENSE)
 ## Support
 
 For help and support:
+- Website: [mosaid.xyz](https://www.mosaid.xyz/article/278/how-to-install-and-use-quran-player-on-linux-macos-and-windows/)
+- Email: mail@mosaid.xyz
 - [Documentation Wiki](https://github.com/neoMOSAID/quran-player/wiki)
 - [Issues Tracker](https://github.com/neoMOSAID/quran-player/issues)
-- Email: mail@mosaid.xyz
