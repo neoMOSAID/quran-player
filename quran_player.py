@@ -244,8 +244,11 @@ class Daemon:
 
     def rotate_log_if_needed(self,logfile):
         """Rotate log file if it exceeds configured maximum size"""
-        max_size = self.config.getint('daemon', 'MAX_LOG_SIZE', fallback=1000000)
-        
+        # Use default value if config not loaded yet
+        max_size = 1000000  # Default 1MB
+        if hasattr(self, 'config'):
+            max_size = self.config.getint('daemon', 'MAX_LOG_SIZE', fallback=max_size)
+            
         with self.log_lock:
             try:
                 if os.path.exists(logfile) and os.path.getsize(logfile) >= max_size:
@@ -313,8 +316,8 @@ class Daemon:
         try:
             if key == "MAX_LOG_SIZE":
                 validated_value = int(value)
-                if validated_value <= 0:
-                    raise ValueError("Must be positive.")
+                if validated_value < 1024:
+                    raise ValueError("Must at least 1024 bytes.")
             elif key == "FILES_DIRECTORY":
                 if os.path.isdir(value):
                     validated_value = value
