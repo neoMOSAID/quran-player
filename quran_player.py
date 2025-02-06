@@ -57,7 +57,9 @@ from datetime import datetime
 from threading import Lock
 from pathlib import Path
 import pygame
-import fcntl
+import psutil
+import portalocker
+import tempfile
 import shutil
 import subprocess
 import signal
@@ -76,7 +78,10 @@ USER_CONFIG_DIR = os.path.expanduser("~/.config/quran-player")
 # daemon files
 LOG_FILE = os.path.join(CONTROL_DIR, "daemon.log")
 CILENT_LOG_FILE = os.path.join(CONTROL_DIR, "daemon-client.log")
-SOCKET_FILE = os.path.join(CONTROL_DIR, "daemon.sock")
+if sys.platform == 'win32':
+    SOCKET_FILE = r'\\.\pipe\quran-daemon'
+else:
+    SOCKET_FILE = os.path.join(CONTROL_DIR, "daemon.sock")
 PID_FILE = os.path.join(CONTROL_DIR, "daemon.pid")
 LOCK_FILE = os.path.join(CONTROL_DIR, "daemon.lock")
 DEFAULT_CONFIG_FILE = os.path.join(SCRIPT_DIR, "default_config.ini")
@@ -90,15 +95,26 @@ SAMPLE_DIR = os.path.join(USER_CONFIG_DIR, "sample")
 
 REQUIRED_FILES = [
     "001000.mp3", "001001.mp3", "001002.mp3", "001003.mp3", "001004.mp3", "001005.mp3", "001006.mp3", "001007.mp3",
-    "002000.mp3", "002001.mp3", "002002.mp3", "002003.mp3", "002004.mp3", "002005.mp3", "002006.mp3", "002007.mp3", "002008.mp3", "002009.mp3", "002010.mp3"
+    "002000.mp3", "002001.mp3", "002002.mp3", "002003.mp3", "002004.mp3", "002005.mp3", "002006.mp3", "002007.mp3", 
+    "002008.mp3", "002009.mp3", "002010.mp3"
 ]
 
-def ensure_dirs():
-    """Ensure directories exist and required audio files are present."""
-    os.makedirs(USER_CONFIG_DIR, exist_ok=True)
-    os.makedirs(CONTROL_DIR, exist_ok=True)
-    os.makedirs(SAMPLE_DIR, exist_ok=True)
 
+def ensure_files(target_dir):
+    """Ensure required directories exist and copy necessary files if missing."""
+    
+    # Ensure required directories exist
+    for directory in [USER_CONFIG_DIR, CONTROL_DIR, target_dir]:
+        if not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
+
+    # Copy required audio files if missing
+    for filename in REQUIRED_FILES:
+        dest = os.path.join(target_dir, filename)
+        if not os.path.exists(dest):
+            shutil.copy2(os.path.join(AUDIO_SOURCE_DIR, filename), dest)
+
+    # Ensure Arabic font is available
     dest_file = os.path.join(USER_CONFIG_DIR, "arabic-font.ttf")
     src_file = os.path.join(SCRIPT_DIR, "arabic-font.ttf")
 
@@ -108,19 +124,6 @@ def ensure_dirs():
             print(f"Copied: arabic-font.ttf")
         else:
             print(f"Missing source file: {src_file}")
-    
-    for filename in REQUIRED_FILES:
-        dest_file = os.path.join(SAMPLE_DIR, filename)
-        src_file = os.path.join(AUDIO_SOURCE_DIR, filename)
-        
-        if not os.path.exists(dest_file):
-            if os.path.exists(src_file):
-                shutil.copy2(src_file, dest_file)
-                print(f"Copied: {filename}")
-            else:
-                print(f"Missing source file: {src_file}")
-
-
 
 
 class Daemon:
@@ -149,11 +152,17 @@ class Daemon:
             5,   4,   5,   6  # Complete with all 114 values
         ]
 
-        ensure_dirs()
-        
         self.config = self.load_config()
+        self.audio_base = self.config.get('daemon', 'FILES_DIRECTORY', 
+                                  fallback=os.path.join(USER_CONFIG_DIR, "sample"))
+        
+        ensure_files(self.audio_base)        
+        
 
         self.view_image = self.config.getboolean('image', 'ENABLE', fallback=True)
+        if sys.platform not in {'linux', 'linux2'}:
+            self.view_image = False
+            self.log_action("WARNING", "Image display disabled - requires Linux")
         
         # State management
         self.current_surah = 1
@@ -179,11 +188,6 @@ class Daemon:
         # Load previous state
         self.load_playback_state()
 
-        # Audio configuration
-        self.audio_base = os.path.join(
-            self.config.get('daemon', 'FILES_DIRECTORY',
-                          fallback=os.path.join(USER_CONFIG_DIR, "sample/"))
-        )
 
     def init_audio(self, max_retries=3, retry_delay=1):
         drivers = ['alsa', 'pulseaudio', 'dsp', 'dummy']
@@ -329,7 +333,10 @@ class Daemon:
                 if len(parts) != 2 or not all(part.isdigit() for part in parts):
                     raise ValueError("Invalid resolution format.")
                 validated_value = value
-            elif key in ["FONT_FILE", "BG_COLOR", "TEXT_COLOR", "HIGHLIGHT_COLOR"]:
+            elif key == "FONT_FILE":
+                if not os.path.exists(value):  
+                    raise ValueError("Font file missing")
+            elif key in ["BG_COLOR", "TEXT_COLOR", "HIGHLIGHT_COLOR"]:
                 validated_value = str(value)
             elif key in ["FONT_SIZE", "IMAGE_WIDTH", "WRAP_WIDTH", "VERTICAL_PADDING"]:
                 validated_value = int(value)
@@ -392,7 +399,9 @@ class Daemon:
 
     def handle_config(self):
         """Write the default configuration to the user's config file."""
-        ensure_dirs()
+        default_dir = os.path.join(USER_CONFIG_DIR, "sample")
+        ensure_files(default_dir)
+
         defaults = self.get_default_config()
         config = configparser.ConfigParser()
 
@@ -472,7 +481,8 @@ class Daemon:
         # Use a lock file to prevent multiple instances
         with open(LOCK_FILE, 'w') as f:
             try:
-                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                #fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                portalocker.lock(f, portalocker.LOCK_EX)
             except IOError:
                 self.log_action("ERROR", "Daemon already running (locked)")
                 sys.exit(1)
@@ -497,11 +507,18 @@ class Daemon:
         if os.path.exists(SOCKET_FILE):
             os.remove(SOCKET_FILE)
 
-        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  
-        server.bind(SOCKET_FILE)
-        server.listen(5)
-        server.settimeout(1)  # Add timeout to break accept() blocking
+        # In handle_start()
+        if sys.platform == 'win32':
+            server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server.bind(('localhost', 58901))  # Use TCP port
+            server.listen(5)  
+            server.settimeout(1)  
+        else:
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  
+            server.bind(SOCKET_FILE)
+            server.listen(5)
+            server.settimeout(1)  # Add timeout to break accept() blocking
 
         self.log_action("SYSTEM", "Daemon started. Listening for commands.")
         self.running = True
@@ -535,6 +552,8 @@ class Daemon:
     def cleanup(self, server):
         """Clean up resources."""
         server.close()
+        if os.path.exists(LOCK_FILE): 
+            os.remove(LOCK_FILE)
         if os.path.exists(PID_FILE):
             os.remove(PID_FILE)
         if os.path.exists(SOCKET_FILE):
@@ -845,7 +864,7 @@ class Daemon:
 
     def show_verse_image(self, text, highlight_line=None):
         """Show verse image in single feh instance with auto-reload"""
-        output_path = "/tmp/quran_verse.png"
+        output_path = os.path.join(tempfile.gettempdir(), "quran_verse.png")
         
         # Generate new image
         success = arabic_topng.render_arabic_text_to_image(
@@ -869,15 +888,18 @@ class Daemon:
             pass
 
         # Start new feh instance with clean options
-        self.feh_process = subprocess.Popen([
-            'feh',
-            '--image-bg', 'none',
-            '--no-menus',
-            '--auto-zoom',
-            '--title', 'QuranPlayer',  # Unique window title
-            output_path
-        ])
-        self.log_action("IMAGE", "Launched new feh window")
+        try:
+            self.feh_process = subprocess.Popen([
+                'feh',
+                '--image-bg', 'none',
+                '--no-menus',
+                '--auto-zoom',
+                '--title', 'QuranPlayer',  # Unique window title
+                output_path
+            ])
+            self.log_action("IMAGE", "Launched new feh window")
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            self.log_action("ERROR", "feh not installed!")
 
 
     def handle_repeat(self, args):
@@ -984,23 +1006,27 @@ def is_daemon_running():
         with open(PID_FILE, "r") as f:
             pid = int(f.read().strip())
 
-        # Check if process exists first
-        os.kill(pid, 0)  # Will throw OSError if process doesn't exist
+        # Check if process exists
+        os.kill(pid, 0)  # Raises OSError if process doesn't exist
 
-        # Check process name in command line arguments
+        # Get the script filename dynamically
+        script_name = os.path.basename(__file__)
+
+        # Linux-specific method (checking /proc)
         cmdline_path = Path(f"/proc/{pid}/cmdline")
-        if not cmdline_path.exists():
-            return False
+        if cmdline_path.exists():
+            cmdline = cmdline_path.read_bytes().decode().replace('\x00', ' ')
+            return script_name in cmdline
 
-        cmdline = cmdline_path.read_bytes().decode().replace('\x00', ' ')
-        
-        return "quran_player.py" in cmdline  
+        # Cross-platform fallback using psutil
+        for proc in psutil.process_iter(['pid', 'cmdline']):
+            if proc.info['pid'] == pid and proc.info['cmdline']:
+                return script_name in ' '.join(proc.info['cmdline'])
 
-    except (ValueError, OSError, FileNotFoundError):
+    except (ValueError, OSError, FileNotFoundError, psutil.NoSuchProcess):
         return False
-    except Exception as e:
-        print(f"Unexpected error checking process: {str(e)}")
-        return False
+
+    return False
 
 
 def cleanup_orphaned_files():
@@ -1030,8 +1056,6 @@ def print_usage():
     print("  config  - Generate default config  and override user config file")
 
 if __name__ == "__main__":
-    os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
-    import pygame  # Hidden import
     
     daemon = Daemon()
 
@@ -1061,13 +1085,18 @@ if __name__ == "__main__":
             sys.exit(1)
 
         try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            if sys.platform == 'win32':
+                client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                client.settimeout(5)
+                client.connect(('localhost', 58901))
+            else:
+                client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 client.settimeout(5)
                 client.connect(SOCKET_FILE)
                 
-                # Send raw command string
-                client.sendall((' '.join(sys.argv[1:])).encode() + b"\n")
-                print(client.recv(1024).decode().strip())
+            # Send raw command string
+            client.sendall((' '.join(sys.argv[1:])).encode() + b"\n")
+            print(client.recv(1024).decode().strip())
                 
         except (ConnectionRefusedError, FileNotFoundError):
             print("Error: Daemon unavailable")
