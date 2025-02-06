@@ -31,13 +31,9 @@ cd quran-player
 
 ### Windows/macOS (not tested)
 1. Install Python 3.8+
-2. Install dependencies:
+2. Run:
    ```bash
-   pip install -r requirements.txt
-   ```
-3. Run:
-   ```bash
-   python quran_gui.py
+   python setup.py
    ```
 
 ## Usage
