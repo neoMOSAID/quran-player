@@ -128,6 +128,7 @@ class Daemon:
         self.running = False
         self.error_msg=""
         self.audio_lock = threading.Lock()
+        self.log_lock = threading.Lock()
         self.valid_commands =["play", "pause", "toggle", "stop", "load", "repeat",
                               "prev", "next","start","status", "config"]
 
@@ -224,13 +225,46 @@ class Daemon:
         timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         pid = os.getpid()
         log_entry = f"{timestamp}|{pid}|{method}|{flag}|{msg}\n"
+        
+        # Determine which log file to use
         if method == 'handle_client' and flag == "ERROR":
-            with open(CILENT_LOG_FILE, "a") as log:
-                log.write(log_entry)
+            log_path = CILENT_LOG_FILE
         else:
-            with open(LOG_FILE, "a") as log:
+            log_path = LOG_FILE
+
+        # Rotate log if needed
+        self.rotate_log_if_needed(log_path)
+
+        # Write to log file
+        try:
+            with open(log_path, "a") as log:
                 log.write(log_entry)
-        #print(log_entry.strip())
+        except IOError as e:
+            print(f"Failed to write to log: {str(e)}", file=sys.stderr)
+
+    def rotate_log_if_needed(self,logfile):
+        """Rotate log file if it exceeds configured maximum size"""
+        max_size = self.config.getint('daemon', 'MAX_LOG_SIZE', fallback=1000000)
+        
+        with self.log_lock:
+            try:
+                if os.path.exists(logfile) and os.path.getsize(logfile) >= max_size:
+                    # Rotate logs
+                    rotated_log = f"{logfile}.1"
+                    
+                    # Remove old rotated log if exists
+                    if os.path.exists(rotated_log):
+                        os.remove(rotated_log)
+                    
+                    # Rotate current log
+                    os.rename(logfile, rotated_log)
+                    
+                    # Log the rotation
+                    with open(logfile, "w") as new_log:
+                        new_log.write(f"{datetime.now().isoformat()}|SYSTEM|LOG|Rotated log file\n")
+            except Exception as e:
+                print(f"Log rotation failed: {str(e)}", file=sys.stderr)
+
 
     def verify_audio_config(self):
         """Check for valid audio configuration"""
