@@ -126,8 +126,9 @@ def ensure_dirs():
 class Daemon:
     def __init__(self):
         self.running = False
+        self.error_msg=""
         self.audio_lock = threading.Lock()
-        self.valid_commands =["play", "pause", "toggle", "stop", "load",
+        self.valid_commands =["play", "pause", "toggle", "stop", "load", "repeat",
                               "prev", "next","start","status", "config"]
 
         # Surah-ayah count mapping (index 0 unused, 1-114 are surah numbers)
@@ -157,6 +158,9 @@ class Daemon:
         self.current_surah = 1
         self.current_ayah = 1
         self.state_file = STATE_FILE
+        self.repeat_enabled = False
+        self.repeat_start = 1
+        self.repeat_end = 1
 
         self.current_playback = None
         self.resources_initialized = False  # Track initialization state of pygame
@@ -392,6 +396,11 @@ class Daemon:
                     conn.sendall(b"ERROR: Missing surah:ayah\n")
                     return
                 success = self.handle_load(args)
+            elif command == "repeat":
+                if not args:
+                    conn.sendall(b"ERROR: Missing start:end\n")
+                    return
+                success = self.handle_repeat(args)
             elif command in self.valid_commands: 
                 success = getattr(self, f"handle_{command}")()
             else:
@@ -401,7 +410,7 @@ class Daemon:
             # Send OK/ERROR based on success
             # Send response with error handling
             try:
-                response = b"OK\n" if success else b"ERROR: Command failed\n"
+                response = f"OK\n".encode() if success else f"ERROR: Command failed: {self.error_msg}\n".encode()
                 conn.sendall(response)
             except (BrokenPipeError, ConnectionResetError):
                 self.log_action("WARNING", "Client disconnected before receiving response")
@@ -411,6 +420,7 @@ class Daemon:
         finally:
             try:
                 conn.close()
+                self.error_msg = ""
             except:
                 pass
 
@@ -512,6 +522,7 @@ class Daemon:
         """Handle play command with success return"""
         print("Handling play command")
         try:
+            self.repeat_enabled = False
             return self.play_audio()
         except Exception as e:
             self.log_action("ERROR", f"Play failed: {str(e)}")
@@ -519,8 +530,11 @@ class Daemon:
         
     def handle_status(self):
         """Return current playback status in pipe-separated format"""
+        aa=""
+        if self.repeat_enabled:
+            aa="-REPEAT"
         status = "PAUSED" if self.is_paused else "PLAYING"
-        return f"STATUS|{self.current_surah}|{self.current_ayah}|{status}"
+        return f"STATUS|{self.current_surah}|{self.current_ayah}|{status}{aa}"
 
     def handle_pause(self):
         """Toggle pause state with proper state tracking"""
@@ -695,23 +709,33 @@ class Daemon:
 
 
     def handle_playback_end(self):
-        """Handle track completion and play next"""
-        if not self.is_paused:
-            # Increment state
-            new_ayah = self.current_ayah + 1
-            new_surah = self.current_surah
+        """Handle track completion with repeat support"""
+        if self.is_paused:
+            return
 
-            # if there are no more verses in current surah , increment it 
-            if not self.reset_file_not_found(ayah=new_ayah):
-                new_surah = self.current_surah + 1
-            
-            # Validate next file , reset if not found
-            self.reset_file_not_found(ayah=new_ayah,surah=new_surah)
+        if self.repeat_enabled:
+            next_ayah = self.current_ayah + 1
+            if next_ayah > self.repeat_end:
+                next_ayah = self.repeat_start
+            next_surah = self.current_surah
+        else:
+            next_ayah = self.current_ayah + 1
+            next_surah = self.current_surah
+            if next_ayah > self.surah_ayat[next_surah]:
+                next_surah += 1
+                next_ayah = 1
+                if next_surah > 114:
+                    next_surah = 1
 
-            # Commit state
-            self.log_action("INFO", f"New state: {self.current_surah}:{self.current_ayah}")
-            self.save_playback_state()
-            self.play_audio()
+        self.current_surah = next_surah
+        self.current_ayah = next_ayah
+
+        if not self.get_audio_path():
+            self.reset_file_not_found()
+
+        self.log_action("INFO", f"New state: {self.current_surah}:{self.current_ayah}")
+        self.save_playback_state()
+        self.play_audio()
 
     def stop_playback(self):
         pygame.mixer.music.stop()
@@ -771,6 +795,7 @@ class Daemon:
 
             self.current_surah = surah
             self.current_ayah = ayah
+            self.repeat_enabled = False
             self.save_playback_state()
             return self.play_audio()
 
@@ -818,6 +843,48 @@ class Daemon:
         self.log_action("IMAGE", "Launched new feh window")
 
 
+    def handle_repeat(self, args):
+        """Handle repeat command with verse range validation"""
+        try:
+            start, end = map(int, args.split(':', 1))
+        except ValueError:
+            self.log_action("ERROR", "Repeat requires integer start and end verses")
+            self.error_msg = "Repeat requires integer start and end verses"
+            return False
+
+        current_surah = self.current_surah
+        max_ayat = self.surah_ayat[current_surah]
+
+        if start < 1 or end > max_ayat:
+            self.log_action("ERROR", f"Invalid range {start}-{end} for Surah {current_surah} (1-{max_ayat})")
+            self.error_msg = f"Invalid range {start}-{end} for Surah {current_surah} (1-{max_ayat})"
+            return False
+        if start > end:
+            self.log_action("ERROR", f"Start verse {start} > end verse {end}")
+            self.error_msg = f"Start verse {start} > end verse {end}"
+            return False
+
+        # Verify all audio files exist in range
+        for ayah in range(start, end+1):
+            path = os.path.join(self.audio_base, f"{current_surah:03}{ayah:03}.mp3")
+            if not os.path.exists(path):
+                self.log_action("ERROR", f"Missing audio file {current_surah}:{ayah}")
+                self.error_msg = f"Missing audio file {current_surah}:{ayah}"
+                return False
+
+        self.repeat_start = start
+        self.repeat_end = end
+        self.repeat_enabled = True
+
+        # Adjust current ayah if outside range
+        if not (start <= self.current_ayah <= end):
+            self.current_ayah = start
+            self.save_playback_state()
+
+        self.log_action("REPEAT", f"Repeat range set: {current_surah}:{start}-{end}")
+        return True
+
+
 def about():
     """Generate formatted about information with command documentation"""
     about_info = f"""
@@ -830,6 +897,7 @@ def about():
     visual display. Features include:
     
     • Verse-by-verse playback with auto-advance
+    • Repeat a range of verses
     • Display current verse in feh
     • Cross-platform audio backend support
     • Persistent playback state
@@ -856,6 +924,7 @@ def about():
         ("prev", "Previous verse"),
         ("next", "Next verse"),
         ("load <surah:ayah>", "Load specific verse"),
+        ("repeat <start:end>", "repeat a range of verse, load and play commands break repeat mode"),
         ("status", "Get playback status"),
         ("cleanup", "Clean up orphaned runtime files"),
         ("config", "Generate and override user config file"),
@@ -916,7 +985,8 @@ def print_usage():
     print("  pause   - Pause playback")
     print("  prev    - Play previous track")
     print("  next    - Play next track")
-    print("  load <surah> <ayah>    - Load track")
+    print("  load <surah>:<ayah>    - Load track")
+    print("  repeat <start>:<end>    - repeat verses, load and play commands break repeat mode")
     print("  cleanup - Clean up files")
     print("  about   - Print info about this daemon")
     print("  help    - Print info about this daemon")
