@@ -1,4 +1,4 @@
-# Quran Player 
+# Quran Player
 
 ![Project Logo](https://raw.githubusercontent.com/neoMOSAID/quran-player/main/icon.png)
 
@@ -7,6 +7,8 @@ A cross-platform Quran playback system with synchronized visual display
 
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-green)](https://python.org)
+[![Website](https://img.shields.io/badge/Python-3.8%2B-green)](https://python.org)
+[![Website](https://img.shields.io/badge/Website-mosaid.xyz-blue)](https://www.mosaid.xyz/article/278/how-to-install-and-use-quran-player-on-linux-macos-and-windows/)
 
 ## Features
 
@@ -85,38 +87,38 @@ TEXT_COLOR = 255,255,255,255
 
 The Quran Player requires the following dependencies to function properly:
 
-#### **Core Dependencies (All Platforms)**  
-- **Python 3.8+**: The application is built using Python.  
-- **Python Libraries**: Install via `pip install -r requirements.txt`:  
-  - `pygame` (audio playback)  
-  - `pystray` (system tray GUI)  
-  - `pillow` (image rendering)  
-  - `arabic-reshaper` and `python-bidi` (Arabic text shaping and rendering)  
+#### **Core Dependencies (All Platforms)**
+- **Python 3.8+**: The application is built using Python.
+- **Python Libraries**: Install via `pip install -r requirements.txt`:
+  - `pygame` (audio playback)
+  - `pystray` (system tray GUI)
+  - `pillow` (image rendering)
+  - `arabic-reshaper` and `python-bidi` (Arabic text shaping and rendering)
 
-#### **Platform-Specific Requirements**  
-- **Linux/macOS**:  
-  - `feh` (image viewer for displaying Arabic text)  
-  - PulseAudio  (audio backend)  
-  - Arabic font support (ensure system fonts are installed)  
-- **Windows**:  
-  - Manual font installation (copy `arabic-font.ttf` to `C:\Windows\Fonts`)  
+#### **Platform-Specific Requirements**
+- **Linux/macOS**:
+  - `feh` (image viewer for displaying Arabic text)
+  - PulseAudio  (audio backend)
+  - Arabic font support (ensure system fonts are installed)
+- **Windows**:
+  - Manual font installation (copy `arabic-font.ttf` to `C:\Windows\Fonts`)
 
-#### **Audio Files**  
-The Quran Player requires Quranic audio files named in the format `XXXYYY.mp3`, where:  
-- `XXX` is the 3-digit surah number (e.g., `002` for Surah Al-Baqarah)  
-- `YYY` is the 3-digit ayah number (e.g., `001` for the first ayah)  
+#### **Audio Files**
+The Quran Player requires Quranic audio files named in the format `XXXYYY.mp3`, where:
+- `XXX` is the 3-digit surah number (e.g., `002` for Surah Al-Baqarah)
+- `YYY` is the 3-digit ayah number (e.g., `001` for the first ayah)
 
-**Example**: `002001.mp3` for Surah 2, Ayah 1.  
+**Example**: `002001.mp3` for Surah 2, Ayah 1.
 
-You can download these files from sources like [EveryAyah.com](https://everyayah.com/recitations_ayat.html). Place the files in the `~/.config/quran-player/sample/` directory (or the configured `FILES_DIRECTORY` in `config.ini`).  
+You can download these files from sources like [EveryAyah.com](https://everyayah.com/recitations_ayat.html). Place the files in the `~/.config/quran-player/sample/` directory (or the configured `FILES_DIRECTORY` in `config.ini`).
 
 ---
 
-### **Windows Compatibility Notes**  
-While the Quran Player is designed to work on Windows, there are some platform-specific considerations:  
-1. **Config Paths**: The default configuration directory (`~/.config/quran-player`) translates to `%LOCALAPPDATA%\quran-player` on Windows (e.g., `C:\Users\USERNAME\AppData\Local\quran-player`).  
-2. **Image Display**: The Linux-specific `feh` image viewer is unavailable on Windows. The application will use the default image viewer, but functionality may be limited.  
-3. **Arabic Input**: Ensure Arabic fonts are installed and configured correctly for proper text rendering.  
+### **Windows Compatibility Notes**
+While the Quran Player is designed to work on Windows, there are some platform-specific considerations:
+1. **Config Paths**: The default configuration directory (`~/.config/quran-player`) translates to `%LOCALAPPDATA%\quran-player` on Windows (e.g., `C:\Users\USERNAME\AppData\Local\quran-player`).
+2. **Image Display**: The Linux-specific `feh` image viewer is unavailable on Windows. The application will use the default image viewer, but functionality may be limited.
+3. **Arabic Input**: Ensure Arabic fonts are installed and configured correctly for proper text rendering.
 
 
 
