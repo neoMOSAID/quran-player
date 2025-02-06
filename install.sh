@@ -5,6 +5,7 @@
 REAL_USER=${SUDO_USER:-$USER}
 REAL_HOME=$(eval echo ~$REAL_USER)
 INSTALL_DIR="$REAL_HOME/.quran-player"
+CONFIG_DIR="$REAL_HOME/.config/quran-player"
 BIN_DIR="/usr/local/bin"
 DESKTOP_FILE="$REAL_HOME/.local/share/applications/quran-player.desktop"
 
@@ -184,8 +185,9 @@ main_install() {
 uninstall() {
     echo -e "${RED}Uninstalling...${NC}"
     # Kill processes using stored PIDs
-    [ -f "$REAL_HOME/.quran-player/.daemon_pid" ] && kill -9 $(cat "$REAL_HOME/.quran-player/.daemon_pid") 2>/dev/null
+    [ -f "$REAL_HOME/.quran-player/control/daemon.pid" ] && kill -9 $(cat "$REAL_HOME/.quran-player/control/daemon.pid") 2>/dev/null
     [ -f "$REAL_HOME/.quran-player/.gui_pid" ] && kill -9 $(cat "$REAL_HOME/.quran-player/.gui_pid") 2>/dev/null
+    
     # Remove all files
     echo "removing $BIN_DIR/quran-daemon"
     sudo rm -f $BIN_DIR/quran-daemon
@@ -195,13 +197,23 @@ uninstall() {
     sudo rm -f $BIN_DIR/quran-search
     echo "removing $BIN_DIR/arabic-topng"
     sudo rm -f $BIN_DIR/arabic-topng
-    echo "removing install dir  $INSTALL_DIR"
+    echo "removing install dir $INSTALL_DIR"
     rm -rf "$INSTALL_DIR"
-    echo "removing desktop file  $DESKTOP_FILE"
+    echo "removing desktop file $DESKTOP_FILE"
     rm -f "$DESKTOP_FILE"
+    
+    # Remove manpage
+    echo "Removing manpage"
+    sudo rm -f /usr/local/share/man/man1/quran-daemon.1.gz
+    if [ -f /usr/local/share/man/man1/quran-daemon.1.gz ]; then
+        echo -e "${RED}Failed to remove manpage!${NC}"
+    else
+        echo -e "${GREEN}Manpage removed successfully${NC}"
+        sudo mandb >/dev/null
+    fi
+    
     echo -e "${GREEN}Uninstallation complete!${NC}"
 }
-
 # Argument handling
 case "$1" in
     --uninstall)

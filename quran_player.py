@@ -166,7 +166,7 @@ class Daemon:
         
         # State management
         self.current_surah = 1
-        self.current_ayah = 1
+        self.current_ayah = 0
         self.state_file = STATE_FILE
         self.repeat_enabled = False
         self.repeat_start = 1
@@ -632,10 +632,10 @@ class Daemon:
         self.current_ayah -= 1
         
         # Handle underflow
-        if self.current_ayah < 1:
+        if self.current_ayah < 0:
             self.current_surah -= 1
             # Handle surah underflow
-            if self.current_surah < 1:
+            if self.current_surah < 0:
                 self.current_surah = 114  # Wrap to last surah
             self.current_ayah = self.surah_ayat[self.current_surah]
         
@@ -663,7 +663,7 @@ class Daemon:
             # Handle surah overflow
             if self.current_surah > 114:
                 self.current_surah = 1  # Wrap to first surah
-            self.current_ayah = 1
+            self.current_ayah = 0
         
         # Verify the new ayah exists
         if not self.get_audio_path():
@@ -751,7 +751,7 @@ class Daemon:
         # If surah is provided, attempt a reset
         if surah is not None:
             self.log_action("WARNING", "Next file missing, resetting")
-            self.current_ayah = 1
+            self.current_ayah = 0
             self.current_surah = 1 if surah > 114 else surah
             next_path = self.get_audio_path()
 
