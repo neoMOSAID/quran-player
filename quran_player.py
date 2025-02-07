@@ -99,6 +99,21 @@ REQUIRED_FILES = [
     "002008.mp3", "002009.mp3", "002010.mp3"
 ]
 
+# Log Level Mapping
+LOG_LEVELS = {
+    "CRITICAL": 50,
+    "ERROR": 40,
+    "WARNING": 30,
+    "INFO": 20,
+    "DEBUG": 10,
+    "DISABLED": 0,
+}
+
+# Critical messages (must always be logged)
+CRITICAL_FLAGS = {"CRITICAL", "ERROR"}
+
+# Optional non-critical logs (can be disabled)
+NON_CRITICAL_FLAGS = {"INFO", "DEBUG", "WARNING", "SYSTEM"}
 
 def ensure_files(target_dir):
     """Ensure required directories exist and copy necessary files if missing."""
@@ -183,7 +198,7 @@ class Daemon:
         if not pygame.get_init():
             pygame.init()
             if not self.init_audio():
-                self.log_action("SYSTEM", "Audio initialization failed - running in silent mode")
+                self.log_action("ERROR", "Audio initialization failed - running in silent mode")
 
         # Load previous state
         self.load_playback_state()
@@ -203,15 +218,15 @@ class Daemon:
                         buffer=1024,
                         allowedchanges=0
                     )
-                    self.log_action("SYSTEM", f"Successfully initialized with {driver}")
+                    self.log_action("INFO", f"Successfully initialized with {driver}")
                     return True
                 except pygame.error as e:
-                    self.log_action("SYSTEM", f"Failed with {driver}: {str(e)}")
+                    self.log_action("ERROR", f"Failed with {driver}: {str(e)}")
 
-            self.log_action("SYSTEM", f"Retrying audio initialization ({attempt+1}/{max_retries})")
+            self.log_action("INFO", f"Retrying audio initialization ({attempt+1}/{max_retries})")
             time.sleep(retry_delay)
 
-        self.log_action("SYSTEM", "Falling back to dummy audio driver")
+        self.log_action("INFO", "Falling back to dummy audio driver")
         os.environ['SDL_AUDIODRIVER'] = 'dummy'
         pygame.mixer.init()
         return False
@@ -224,17 +239,31 @@ class Daemon:
             print("Failed to recover audio after crash")
 
     def log_action(self, flag, msg):
-        """Log an action with timestamp, PID, method, flag, and message."""
+        """Log an action based on log level settings."""
+        # Retrieve log level from config
+        try:
+            log_level_str = self.config.get("daemon", "LOG_LEVEL", fallback="INFO").upper()
+        except AttributeError:
+            log_level_str = "INFO"
+            
+        log_level = LOG_LEVELS.get(log_level_str, 20)  # Default to INFO
+
+        # Determine message priority
+        message_priority = LOG_LEVELS.get(flag, 20)  # Default to INFO if unknown flag
+
+        # Skip logging if below the configured level (except for critical messages)
+        if message_priority < log_level and flag not in CRITICAL_FLAGS:
+            return  # ✅ Exit early (reduces unnecessary log writes)
+
+        # Get calling method dynamically
         method = inspect.currentframe().f_back.f_code.co_name
         timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         pid = os.getpid()
-        log_entry = f"{timestamp}|{pid}|{method}|{flag}|{msg}\n"
         
-        # Determine which log file to use
-        if method == 'handle_client' and flag == "ERROR":
-            log_path = CILENT_LOG_FILE
-        else:
-            log_path = LOG_FILE
+        log_entry = f"{timestamp}|{pid}|{method}|{flag}|{msg}\n"
+
+        # Choose log file
+        log_path = CILENT_LOG_FILE if method == "handle_client" and flag == "ERROR" else LOG_FILE
 
         # Rotate log if needed
         self.rotate_log_if_needed(log_path)
@@ -286,7 +315,7 @@ class Daemon:
             pygame.init()
             pygame.mixer.init(frequency=44100, buffer=1024)
             self.resources_initialized = True
-            self.log_action("SYSTEM", "Pygame initialized")
+            self.log_action("INFO", "Pygame initialized")
 
 
     def get_default_config(self):
@@ -336,7 +365,7 @@ class Daemon:
             elif key == "FONT_FILE":
                 if not os.path.exists(value):  
                     raise ValueError("Font file missing")
-            elif key in ["BG_COLOR", "TEXT_COLOR", "HIGHLIGHT_COLOR"]:
+            elif key in ["BG_COLOR", "TEXT_COLOR", "HIGHLIGHT_COLOR", "LOG_LEVEL"]:
                 validated_value = str(value)
             elif key in ["FONT_SIZE", "IMAGE_WIDTH", "WRAP_WIDTH", "VERTICAL_PADDING"]:
                 validated_value = int(value)
@@ -358,7 +387,7 @@ class Daemon:
                 # For keys without specific validation, keep as-is
                 validated_value = value
         except (ValueError, TypeError, AttributeError) as e:
-            self.log_action("WARNING",
+            self.log_action("INFO",
                 f"Invalid value for {section}.{key}: {value} ({str(e)}). Using default: {default_value}.")
             validated_value = default_value
 
@@ -379,7 +408,7 @@ class Daemon:
         # Read user config if available
         if os.path.exists(USER_CONFIG_FILE):
             config.read(USER_CONFIG_FILE)
-            self.log_action("SYSTEM", f"Loaded user config from {USER_CONFIG_FILE}")
+            self.log_action("INFO", f"Loaded user config from {USER_CONFIG_FILE}")
         else:
             self.log_action("WARNING", "No user config found. Using defaults.")
 
@@ -414,7 +443,7 @@ class Daemon:
         # Write to file
         with open(USER_CONFIG_FILE, "w") as configfile:
             config.write(configfile)
-        self.log_action("SYSTEM", f"Default config generated at {USER_CONFIG_FILE}")
+        self.log_action("INFO", f"Default config generated at {USER_CONFIG_FILE}")
         return True
 
     def handle_client(self, conn):
@@ -520,7 +549,7 @@ class Daemon:
             server.listen(5)
             server.settimeout(1)  # Add timeout to break accept() blocking
 
-        self.log_action("SYSTEM", "Daemon started. Listening for commands.")
+        self.log_action("INFO", "Daemon started. Listening for commands.")
         self.running = True
         print("OK")
         try:
@@ -532,14 +561,14 @@ class Daemon:
                     # Timeout allows checking self.running periodically
                     continue
         except KeyboardInterrupt:
-            self.log_action("SYSTEM", "Daemon shutting down.")
+            self.log_action("INFO", "Daemon shutting down.")
         finally:
             self.cleanup(server)
 
     def cleanup_resources(self):
         """Cleanup only if resources were initialized"""
         if self.resources_initialized:
-            self.log_action("SYSTEM", "Cleaning up pygame resources")
+            self.log_action("INFO", "Cleaning up pygame resources")
             pygame.mixer.quit()
             pygame.quit()
             self.resources_initialized = False  # Reset state
@@ -561,7 +590,7 @@ class Daemon:
         if self.feh_process and self.feh_process.poll() is None:
             self.feh_process.terminate()
             self.feh_process.wait()
-        self.log_action("SYSTEM", "Cleanup completed.")
+        self.log_action("INFO", "Cleanup completed.")
 
     def handle_cleanup(self):
         """Handle new cleanup command"""
@@ -571,7 +600,7 @@ class Daemon:
     def handle_stop(self):
         """Handle stop command."""
         self.running = False
-        self.log_action("SYSTEM", "Shutdown initiated")
+        self.log_action("INFO", "Shutdown initiated")
         return True
 
     def handle_play(self):
@@ -599,11 +628,11 @@ class Daemon:
                 if pygame.mixer.music.get_busy() and not self.is_paused:
                     pygame.mixer.music.pause()
                     self.is_paused = True
-                    self.log_action("PAUSE", "Playback paused")
+                    self.log_action("INFO", "Playback paused")
                 else:
                     pygame.mixer.music.unpause()
                     self.is_paused = False
-                    self.log_action("PLAY", "Playback resumed")
+                    self.log_action("INFO", "Playback resumed")
                 return True
         except pygame.error as e:
             self.log_action("ERROR", f"Pause failed: {str(e)}")
@@ -713,7 +742,7 @@ class Daemon:
             self.initialize_pygame() 
             audio_path = self.reset_file_not_found()
             if not audio_path:
-                self.log_action("PLAY", "File not found, aborting...")
+                self.log_action("ERROR", "File not found, aborting...")
                 return False
             self.is_paused = False
             try:
@@ -724,13 +753,13 @@ class Daemon:
                 
                 pygame.mixer.music.load(audio_path)
                 pygame.mixer.music.play()
-                self.log_action("PLAY", f"Started: {self.current_surah}:{self.current_ayah}")
+                self.log_action("INFO", f"Started: {self.current_surah}:{self.current_ayah}")
                 # Start simple completion checking
                 threading.Thread(target=self.check_playback_status, daemon=True).start()
                 return True
             except pygame.error as e:
                 self.log_action("ERROR", f"Playback failed: {str(e)}")
-                self.log_action("SYSTEM", "trying to restart audio engine")
+                self.log_action("INFO", "trying to restart audio engine")
                 self.restart_audio_system()
                 return False
 
@@ -765,10 +794,17 @@ class Daemon:
 
 
     def handle_playback_end(self):
-        """Handle track completion with repeat support"""
+        """Handle track completion with repeat support while preventing duplicate triggers."""
         if self.is_paused:
-            return
+            return  # ✅ Ignore if paused
 
+        # ✅ Prevent rapid duplicate calls
+        if hasattr(self, "_last_handled") and time.time() - self._last_handled < 0.5:
+            self.log_action("INFO", "Skipping duplicate playback end trigger")
+            return
+        self._last_handled = time.time()
+
+        # ✅ Determine next ayah and surah
         if self.repeat_enabled:
             next_ayah = self.current_ayah + 1
             if next_ayah > self.repeat_end:
@@ -777,19 +813,26 @@ class Daemon:
         else:
             next_ayah = self.current_ayah + 1
             next_surah = self.current_surah
-            if next_ayah > self.surah_ayat[next_surah]:
+            if next_ayah > self.surah_ayat[next_surah]:  # 
                 next_surah += 1
-                next_ayah = 1
+                next_ayah = 0  # ✅ Keep 0 if valid
                 if next_surah > 114:
-                    next_surah = 1
+                    next_surah = 1  # ✅ Loop back to Surah 1
 
+        # ✅ Log transition
+        self.log_action("INFO", f"Transitioning to: {next_surah}:{next_ayah}")
+
+        # ✅ Avoid re-triggering the same ayah
+        if self.current_surah == next_surah and self.current_ayah == next_ayah:
+            self.log_action("INFO","Skipping redundant playback trigger")
+            return
+
+        # ✅ Update state correctly
         self.current_surah = next_surah
         self.current_ayah = next_ayah
 
         if not self.get_audio_path():
             self.reset_file_not_found()
-
-        self.log_action("INFO", f"New state: {self.current_surah}:{self.current_ayah}")
         self.save_playback_state()
         self.play_audio()
 
@@ -812,8 +855,8 @@ class Daemon:
             self.log_action("ERROR", f"Invalid surah number: {surah} (must be 1-114)")
             return False
             
-        if ayah < 1:
-            self.log_action("ERROR", f"Invalid ayah number: {ayah} (must be ≥1)")
+        if ayah < 0:
+            self.log_action("ERROR", f"Invalid ayah number: {ayah} (must be ≥0)")
             return False
 
         # TODO: Add validation for maximum ayah per surah
@@ -845,7 +888,7 @@ class Daemon:
                 self.log_action("ERROR", f"Invalid surah: {surah}")
                 return False
                 
-            if ayah < 1 or ayah > self.surah_ayat[surah]:
+            if ayah < 0 or ayah > self.surah_ayat[surah]:
                 self.log_action("ERROR", f"Invalid ayah: {ayah} for surah {surah}")
                 return False
 
@@ -881,7 +924,7 @@ class Daemon:
             # Try to reload existing feh instance
             if self.feh_process and (self.feh_process.poll() is None):
                 os.kill(self.feh_process.pid, signal.SIGUSR1)
-                self.log_action("IMAGE", "Reloaded existing feh window")
+                self.log_action("INFO", "Reloaded existing feh window")
                 return
         except (ProcessLookupError, AttributeError):
             # Process dead or not exists, start new
@@ -897,7 +940,7 @@ class Daemon:
                 '--title', 'QuranPlayer',  # Unique window title
                 output_path
             ])
-            self.log_action("IMAGE", "Launched new feh window")
+            self.log_action("INFO", "Launched new feh window")
         except (FileNotFoundError, subprocess.CalledProcessError):
             self.log_action("ERROR", "feh not installed!")
 
@@ -940,8 +983,106 @@ class Daemon:
             self.current_ayah = start
             self.save_playback_state()
 
-        self.log_action("REPEAT", f"Repeat range set: {current_surah}:{start}-{end}")
+        self.log_action("INFO", f"Repeat range set: {current_surah}:{start}-{end}")
         return True
+
+    def handle_info(self):
+        """Print detailed information about daemon status, configuration, and file integrity."""
+        info_lines = []
+        info_lines.append("==== Quran Player Daemon Info ====")
+        
+        # Daemon Status
+        daemon_running = is_daemon_running()
+        info_lines.append(f"Daemon Status: {'Running' if daemon_running else 'Not Running'}")
+        info_lines.append(f"Current PID: {os.getpid()}")
+        
+        # Playback Mode
+        mode = "Paused" if self.is_paused else "Playing"
+        if self.repeat_enabled:
+            mode += f" (Repeat Enabled: {self.repeat_start} to {self.repeat_end})"
+        info_lines.append(f"Playback Mode: {mode}")
+        info_lines.append(f"Current Surah: {self.current_surah}, Current Ayah: {self.current_ayah}")
+        
+        # Audio Files Directory (as set in config)
+        info_lines.append(f"Audio Files Directory (FILES_DIRECTORY): {self.audio_base}")
+        
+        # Check for Missing Audio Files in the configured directory
+        missing_audio = []
+        # We'll check against the REQUIRED_FILES list.
+        for filename in REQUIRED_FILES:
+            path = os.path.join(self.audio_base, filename)
+            if not os.path.exists(path):
+                missing_audio.append(filename)
+        if missing_audio:
+            info_lines.append("\n-- Missing Audio Files --")
+            for f in missing_audio:
+                info_lines.append(f"  - {f}")
+        else:
+            info_lines.append("\nAll required audio files are present in the audio directory.")
+        
+        # Check Core Directories
+        info_lines.append("\n-- Core Directories Check --")
+        core_dirs = {
+            "User Config Directory": USER_CONFIG_DIR,
+            "Control Directory": CONTROL_DIR,
+            "Sample Directory": SAMPLE_DIR,
+            "Script Directory": SCRIPT_DIR
+        }
+        for name, path in core_dirs.items():
+            status = "Exists" if os.path.exists(path) else "Missing"
+            info_lines.append(f"{name}: {path} ({status})")
+        
+        # Check Core Files
+        info_lines.append("\n-- Core Files Check --")
+        core_files = {
+            "Default Config": DEFAULT_CONFIG_FILE,
+            "Arabic Font": os.path.join(SCRIPT_DIR, "arabic-font.ttf")
+        }
+        for name, path in core_files.items():
+            status = "Exists" if os.path.exists(path) else "Missing"
+            info_lines.append(f"{name}: {path} ({status})")
+        
+        # Playback State File
+        if os.path.exists(STATE_FILE):
+            mtime = os.path.getmtime(STATE_FILE)
+            info_lines.append(f"\nPlayback State File: {STATE_FILE} (Last Modified: {datetime.fromtimestamp(mtime)})")
+        else:
+            info_lines.append(f"\nPlayback State File: {STATE_FILE} (Missing)")
+        
+        # Log File Status
+        if os.path.exists(LOG_FILE):
+            size = os.path.getsize(LOG_FILE)
+            mtime = os.path.getmtime(LOG_FILE)
+            info_lines.append(f"Daemon Log File: {LOG_FILE} ({size} bytes, Last Modified: {datetime.fromtimestamp(mtime)})")
+        else:
+            info_lines.append(f"Daemon Log File: {LOG_FILE} (Missing)")
+        
+        # Loaded Configuration Summary
+        info_lines.append("\n-- Loaded Configuration --")
+        for section in self.config.sections():
+            info_lines.append(f"[{section}]")
+            for key, value in self.config.items(section):
+                info_lines.append(f"  {key} = {value}")
+        
+        # System Information
+        info_lines.append("\n-- System Information --")
+        info_lines.append(f"Platform: {sys.platform}")
+        info_lines.append(f"Python Version: {sys.version.split()[0]}")
+        audio_driver = os.environ.get('SDL_AUDIODRIVER', 'Not Set')
+        info_lines.append(f"SDL_AUDIODRIVER: {audio_driver}")
+        
+        # Additional Info from self.surah_ayat (e.g. total verses for current surah)
+        if 1 <= self.current_surah < len(self.surah_ayat):
+            total_ayah = self.surah_ayat[self.current_surah]
+            info_lines.append(f"Total Ayahs in Surah {self.current_surah}: {total_ayah}")
+        else:
+            info_lines.append("Surah information unavailable in surah_ayat list.")
+        
+        # Print all info
+        print("\n".join(info_lines))
+        return True
+
+
 
 
 def about():
@@ -1071,6 +1212,8 @@ if __name__ == "__main__":
             print("Error: Daemon already running")
             sys.exit(1)
         daemon.handle_start()
+    elif command == "info":
+        daemon.handle_info()
     elif command == "cleanup":
         cleanup_orphaned_files()
     elif command == "about" or command == "help":
