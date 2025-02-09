@@ -17,6 +17,7 @@ Usage:
 
 import sys
 import os
+import re
 import subprocess
 from PyQt5 import QtWidgets, QtCore, QtGui
 
@@ -221,6 +222,23 @@ def get_rtl_search_input(title="بحث في القرآن", label="أدخل كل�
     return search_term
 
 
+
+def remove_diacritics(text):
+    arabic_diacritics = re.compile(r"[\u064B-\u065F\u0670\u06D6-\u06ED]")  # Arabic diacritic range
+    return arabic_diacritics.sub("", text)
+
+def normalize_hamza(text):
+    """Normalize Hamza variations so إله and اله are equivalent."""
+    text = text.replace("إ", "ا").replace("أ", "ا").replace("آ", "ا").replace("ء", "")
+    return text
+
+def normalize_text(text):
+    """Remove diacritics and normalize spaces."""
+    text = remove_diacritics(text)  # Remove diacritics
+    text = normalize_hamza(text) 
+    text = re.sub(r"\s+", " ", text).strip()  # Normalize spaces
+    return text
+
 def interactive_mode(uthmani, simplified, chapters):
     """Handle interactive mode using yad dialogs"""
     original_layout = get_current_layout()
@@ -238,12 +256,15 @@ def interactive_mode(uthmani, simplified, chapters):
 
     # Perform search
     matches = []
+    normalized_search_term = normalize_text(search_term)
     for key in simplified:
         simplified_text, _ = simplified[key]
-        if search_term in simplified_text:
+        normalized_text = normalize_text(simplified_text)
+
+        if normalized_search_term in normalized_text:
             matches.append(key)
     
-    matches.sort(key=lambda x: (x[0], x[1]))
+    #matches.sort(key=lambda x: (x[0], x[1]))
     
     if not matches:
         print("No results found.")

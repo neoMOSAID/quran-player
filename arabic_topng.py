@@ -4,6 +4,10 @@ from PIL import Image, ImageDraw, ImageFont
 import textwrap
 import argparse
 
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+FONT_FILE = os.path.join(SCRIPT_DIR, "arabic-font.ttf")
+
+
 def rgba_from_config(config_str):
     """Convert config RGBA string to tuple."""
     return tuple(map(int, config_str.split(',')))
@@ -135,7 +139,7 @@ if __name__ == "__main__":
                         default=int(os.environ.get('PYTHON_IMAGE_FONT_SIZE', 48)),
                         help='Font size in points (default: 48)')
     parser.add_argument('--font-family', type=str,
-                        default=os.environ.get('PYTHON_IMAGE_FONT', 'Amiri'),
+                        default=os.environ.get('PYTHON_IMAGE_FONT', FONT_FILE),
                         help='Font family')
     parser.add_argument('--bg-color', type=rgba_color,
                         default=os.environ.get('PYTHON_IMAGE_BG_COLOR', '0,0,0,0'),
@@ -155,6 +159,11 @@ if __name__ == "__main__":
     # Build a configuration object from the command-line arguments
     config = build_config_from_args(args)
 
+    # for section in config.sections():
+    #     print(f"[{section}]")
+    #     for key, value in config.items(section):
+    #         print(f"{key} = {value}")
+    #     print()
     # Call the rendering function with the configuration object
     success = render_arabic_text_to_image(
         text=args.text,
