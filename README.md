@@ -201,7 +201,7 @@ Run the search tool with:
 quran-search <surah> <start_ayah> [end_ayah]
 ```
 
-If no arguments are provided, the tool launches an interactive dialog (YAD on Linux, or a PyQt5-based alternative).
+If no arguments are provided, the tool launches an interactive dialog that switches the keyboard layout to arabic, and switch it back on exit.
 
 ### Image Rendering
 
