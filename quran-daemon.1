@@ -1,91 +1,218 @@
 .\" Manpage for quran-daemon
-.TH QURAN\-DAEMON 1 "2024-06-20" "1.3.0" "Quran Player Manual"
+.TH QURAN-DAEMON 1 "Feb 2025" "v1.3.0" "Quran Player Daemon Manual"
 .SH NAME
-quran-daemon \- Quranic verse playback daemon with synchronized display
+quran-daemon \- Quran Player Daemon
 .SH SYNOPSIS
 .B quran-daemon
-[\fICOMMAND\fP] [\fIARGUMENTS\fP]
+[\fICOMMAND\fR] [\fIARGUMENTS\fR]...
 .SH DESCRIPTION
-A system service for continuous Quranic audio playback with synchronized Arabic text display. Runs in the background with system tray control.
+The Quran Player Daemon is a background service that provides Quranic verse
+playback with synchronized visual display and Arabic text rendering. It supports
+verse-by-verse audio playback with auto-advance, persistent playback state across
+sessions, repeat functionality, and an optional system tray GUI controller.
+
+The daemon communicates with a GUI controller via a control socket (using UNIX domain
+sockets on Linux/macOS or TCP/Named Pipes on Windows) and is configured via an
+INI-style configuration file.
 .SH COMMANDS
+The following commands are supported:
 .TP
 .B start
-Start the daemon (creates control files in ~/.config/quran-player)
+Start the daemon. This initializes the service, binds the control socket, and
+begins listening for client commands.
 .TP
 .B stop
-Stop the running daemon
+Stop the daemon. This causes the daemon to shut down gracefully, releasing all
+resources and cleaning up socket and PID files.
 .TP
 .B play
-Resume paused playback
+Resume audio playback.
 .TP
 .B pause
-Pause current playback
+Pause the current playback.
 .TP
 .B toggle
-Toggle play/pause state
+Toggle between play and pause.
 .TP
 .B next
-Play next verse
+Advance to the next verse.
 .TP
 .B prev
-Play previous verse
+Return to the previous verse.
 .TP
-.B load \fIsurah:ayah\fP
-Load specific verse (e.g. 2:255)
+.B load
+Load a specific verse. The command expects an argument in the format
+\fIsurah:ayah\fR (for example, \fI2:255\fR).
+.TP
+.B repeat
+Repeat a range of verses. Provide the range in the format
+\fIstart:end\fR (for example, \fI10:15\fR). Note that issuing a play or load command
+cancels repeat mode.
 .TP
 .B status
-Show current playback status
+Display the current playback status, including the surah and ayah numbers and
+playback state.
 .TP
 .B config
-Generate default config file
+Generate the default configuration file in the user configuration directory.
 .TP
 .B cleanup
-Remove orphaned control files
+Remove orphaned runtime files (e.g. stale PID or socket files).
+.TP
+.B info
+Display detailed information about daemon status, configuration settings,
+file integrity, and system information.
 .TP
 .B help
-Show full help text
+Display a help message with a summary of available commands.
 .TP
 .B about
-Display program information
+Display program information, including version, project links, and license details.
 .SH CONFIGURATION
-Configuration file: ~/.config/quran-player/config.ini
+The daemon uses an INI-style configuration file. On Linux/macOS, the file is typically
+located at:
+.IP
+\fB~/.config/quran-player/config.ini\fR
+.IP
+On Windows, it is stored in the APPDATA folder.
 .PP
-Key settings:
-\- audio_file_locations
-\- text_display_settings
-\- logging_preferences
-\- image_rendering_options
+The configuration file is divided into two main sections: \fB[daemon]\fR and \fB[image]\fR.
+.SH "Daemon Section"
+The \fB[daemon]\fR section includes:
+.TP
+\fBMAX_LOG_SIZE\fR
+Maximum size (in bytes) of the log file before rotation occurs. Default: \fB1000000\fR.
+.TP
+\fBLOG_LEVEL\fR
+Log verbosity level. Possible values are:
+\fBCRITICAL\fR, \fBERROR\fR, \fBWARNING\fR, \fBINFO\fR, \fBDEBUG\fR, or \fBDISABLED\fR.
+Default: \fBINFO\fR.
+.TP
+\fBF ILES_DIRECTORY\fR
+The directory where the audio files are stored. If not specified, a default directory
+(e.g., within the user configuration directory) is used.
+.SH "Image Section"
+The \fB[image]\fR section contains settings for rendering Quranic verses as images:
+.TP
+\fBENABLE\fR
+Enable or disable image display. Accepts \fByes\fR or \fBno\fR. Default is \fByes\fR on Linux
+and \fBno\fR on other platforms.
+.TP
+\fBDEFAULT_RESOLUTION\fR
+Default resolution for the generated image in the format \fIWIDTHxHEIGHT\fR (e.g.,
+\fI1240x170\fR).
+.TP
+\fBF INT_FILE\fR
+Path to the Arabic font file used for rendering. By default, the \fBarabic-font.ttf\fR
+in the script or user configuration directory is used.
+.TP
+\fBF INT_SIZE\fR
+Font size for rendering the text. Default: \fB48\fR.
+.TP
+\fBIMAGE_WIDTH\fR
+Width of the generated image in pixels. Default: \fB1240\fR.
+.TP
+\fBWRAP_WIDTH\fR
+Maximum number of characters per line before wrapping. Default: \fB170\fR.
+.TP
+\fBVERTICAL_PADDING\fR
+Vertical padding (in pixels) added to the top and bottom of the image. Default: \fB20\fR.
+.TP
+\fBBG_COLOR\fR
+Background color as a comma-separated RGBA string (for example, \fB0,0,0,0\fR). Default:
+\fB0,0,0,0\fR.
+.TP
+\fBTEXT_COLOR\fR
+Text color as a comma-separated RGBA string (for example, \fB255,255,255,255\fR).
+Default: \fB255,255,255,255\fR.
+.TP
+\fBHIGHLIGHT_COLOR\fR
+Highlight color for indicating a specific line, as a comma-separated RGBA string
+(e.g., \fB255,0,0,255\fR). Default: \fB255,0,0,255\fR.
 .SH FILES
 .TP
-.B ~/.config/quran-player/
-User configuration directory containing:
-.RS
-- config.ini - Main configuration
-- playback_state.ini - Current verse position
-- sample/ - Default audio files
-.RE
+\fBquran_player.py\fR
+The main daemon script.
 .TP
-.B /tmp/quran_verse.png
-Currently displayed verse image
-.SH EXAMPLES
+\fBdefault_config.ini\fR
+Default configuration file shipped with the daemon.
+.TP
+\fBconfig.ini\fR
+User configuration file. Typically located in \fB~/.config/quran-player/\fR (Linux/macOS)
+or in the APPDATA folder (Windows).
+.TP
+\fBdaemon.sock\fR or \fB\\.\pipe\quran-daemon\fR (Windows)
+The control socket used for inter-process communication.
+.TP
+\fBdaemon.pid\fR
+File storing the daemon’s process ID.
+.TP
+\fBdaemon.log\fR
+Log file for daemon events.
+.SH USAGE EXAMPLES
+.TP
 Start the daemon:
-.PP
-.B quran-daemon start
-.PP
-Play next verse:
-.PP
-.B quran-daemon next
-.PP
-Load Al-Baqarah 255:
-.PP
-.B quran-daemon load 2:255
-.SH SEE ALSO
-Project website: https://mosaid.xyz/quran-player
-.br
-GitHub repo: https://github.com/neoMOSAID/quran-player
+.B
+quran-daemon start
+.TP
+Stop the daemon:
+.B
+quran-daemon stop
+.TP
+Toggle playback:
+.B
+quran-daemon toggle
+.TP
+Load a specific verse:
+.B
+quran-daemon load 2:255
+.TP
+Repeat a range of verses:
+.B
+quran-daemon repeat 10:15
+.TP
+Display status:
+.B
+quran-daemon status
+.TP
+Generate a new configuration file:
+.B
+quran-daemon config
+.TP
+Display help:
+.B
+quran-daemon help
+.SH ENVIRONMENT VARIABLES
+The following environment variables can override default configuration values:
+.TP
+\fBPYTHON_IMAGE_WIDTH\fR
+Overrides the default image width.
+.TP
+\fBPYTHON_IMAGE_WRAP_WIDTH\fR
+Overrides the default wrap width.
+.TP
+\fBPYTHON_IMAGE_FONT_SIZE\fR
+Overrides the default font size.
+.TP
+\fBPYTHON_IMAGE_FONT\fR
+Overrides the default font family.
+.TP
+\fBPYTHON_IMAGE_BG_COLOR\fR
+Overrides the default background color.
+.TP
+\fBPYTHON_IMAGE_TEXT_COLOR\fR
+Overrides the default text color.
+.TP
+\fBPYTHON_IMAGE_HIGHLIGHT_COLOR\fR
+Overrides the default highlight color.
+.TP
+\fBPYTHON_IMAGE_VERTICAL_PADDING\fR
+Overrides the default vertical padding.
 .SH BUGS
-Report issues at: https://github.com/neoMOSAID/quran-player/issues
+Report bugs and issues via the project’s GitHub issue tracker:
+.IP
+https://github.com/neoMOSAID/quran-player/issues
 .SH AUTHOR
-MOSAID Radouan
-.SH LICENSE
-GPLv3
+Developed by neoMOSAID.
+.SH COPYRIGHT
+This software is released under the GPLv3 License.

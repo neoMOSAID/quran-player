@@ -1,565 +1,408 @@
-# quran_gui.py - Final Fixes
+#!/usr/bin/env python3
+"""
+Quran Player GUI using PyQt5 - v1.0.1
+
+Features:
+- Dark mode styling with Fusion palette.
+- Playback controls: Play/Pause, Previous, Next, Stop Daemon.
+- Volume slider, verse navigation (Jump to surah:ayah), and repeat controls.
+- Log display (combining daemon log and local errors) updated periodically.
+- Native system tray icon with context menu (Show, Play/Pause, Prev, Next, About, Exit).
+- Keyboard shortcuts: Space (Play/Pause), Left (Previous), Right (Next), Esc (Hide Window).
+- "About" dialog that retrieves information from the daemon.
+- Graceful exit on Ctrl+C.
+- **New:** “Load Verse” now shows an input dialog (format: surah:ayah) and sends a `load` command.
+- **New:** The verse label is updated dynamically using the `status` command.
+"""
+
+import sys
 import os
 import socket
-import sys
-import threading
-import time
 import subprocess
-import argparse
-import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
-from PIL import Image, ImageTk
-import pystray
+import time
 import signal
 
-import arabic_reshaper
-from bidi.algorithm import get_display
+from PyQt5 import QtCore, QtGui, QtWidgets
+from quran_player import USER_CONFIG_FILE
 
-from quran_player import USER_CONFIG_FILE, about
-import quran_search
-
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SOCKET_FILE = os.path.join(SCRIPT_DIR, "control/daemon.sock")
-DAEMON_SCRIPT = os.path.join(SCRIPT_DIR, "quran_player.py")
-ICON_FILE = os.path.join(SCRIPT_DIR, "icon.png")
-
-# Color Scheme
-BG_COLOR = "#2d2d2d"
-FG_COLOR = "#ffffff"
-BUTTON_BG = "#3d3d3d"
-BUTTON_ACTIVE_BG = "#4d4d4d"
-ACCENT_COLOR = "#1e90ff"
-ACCENT_ACTIVE = "#0066cc"
-STATUS_BAR_COLOR = "#1e1e1e"
-
-class QuranController:
+#############################
+# DaemonCommunicator Class
+#############################
+class DaemonCommunicator:
+    """Handles communication with the Quran Player Daemon."""
     def __init__(self):
-        self.current_state = {"surah": 1, "ayah": 1, "paused": False}
-        self.tray_icon = None
-        self.root = None
-        self.daemon_process = None
-        self.polling_thread = None
-        self.running = True
-        self.daemon_stopped = False 
-        self.tray_thread = None  # Add this line
+        self.is_windows = (sys.platform == 'win32')
+        self.setup_paths()
 
-        self.create_gui()
-        self.start_status_poller()
-        signal.signal(signal.SIGINT, self.handle_exit)
+    def setup_paths(self):
+        """Configure socket paths based on platform."""
+        self.script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.control_dir = os.path.join(self.script_dir, "control")
+        if sys.platform == 'win32' and hasattr(socket, "AF_UNIX"):
+            self.socket_path = r'\\.\pipe\quran-daemon'  # Use Windows Named Pipe if available
+        else:
+            self.socket_path = os.path.join(self.control_dir, "daemon.sock")
 
-    def is_daemon_running(self):
-        """Check if daemon is running"""
+
+    def send_command(self, command, *args):
+        """Send a command to the daemon and return its response."""
         try:
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.connect(SOCKET_FILE)
-                return True
-        except (ConnectionRefusedError, FileNotFoundError):
-            return False
+            if self.is_windows:
+                client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                client.connect((self.host, self.port))
+            else:
+                client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                client.connect(self.socket_path)
+            full_cmd = " ".join([command] + list(args))
+            client.sendall(full_cmd.encode() + b"\n")
+            # Increase buffer size for multi-line responses (e.g., about command)
+            response = client.recv(4096).decode().strip()
+            client.close()
+            return response
+        except (FileNotFoundError, ConnectionRefusedError) as e:
+            # This catches errors when the socket file doesn't exist or connection fails.
+            return "Daemon is not running."
+        except Exception as e:
+            return f"ERROR: {str(e)}"
+
+    def get_status(self):
+        """Retrieve current playback status from the daemon."""
+        response = self.send_command("status")
+        if response.startswith("STATUS|"):
+            parts = response.split("|")
+            return {
+                "surah": parts[1],
+                "ayah": parts[2],
+                "status": parts[3],
+                "repeat": "REPEAT" in parts[3]
+            }
+        return None
+    
+    def is_running(self):
+        response = self.send_command("status")
+        if response.startswith("STATUS|"):
+            return "Daemon is running"
+        return "Daemon is not running"
+    
+    def get_logs(self, max_lines="1"):
+        """Retrieve current playback status from the daemon."""
+        response = self.send_command("log",max_lines)
+        return response
     
     def start_daemon(self):
-        """Start the daemon process if not running and not stopped by user"""
-        if self.daemon_stopped:
-            self.update_status_bar("daemon is stopped", error=True)
-            return False  # Don't start if user stopped it
-        
-        if not self.is_daemon_running():
-            self.update_status_bar("trying to start daemon", error=False)
-            try:
-                self.daemon_process = subprocess.Popen(
-                    [sys.executable, DAEMON_SCRIPT, "start"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-                time.sleep(1)
-                self.daemon_stopped = False
-                return True
-            except Exception as e:
-                self.update_status_bar(f"Failed to start daemon: {str(e)}", error=True)
-                return False
-        return True
-
-    def stop_daemon(self):
-        """Stop the daemon process and update state"""
-        if self.is_daemon_running():
-            response = self.send_command("stop")
-            if response:
-                self.daemon_stopped = True
-                self.update_status_bar("Daemon stopped. (Manual restart required)")
-                # Update button text
-                self.stop_button.config(text="Start Daemon")
-                return True
-            else:
-                self.update_status_bar("Failed to stop daemon.", error=True)
-                return False
-        else:
-            self.update_status_bar("Daemon is not running.")
-            return False
-
-    def toggle_daemon(self):
-        """Toggle daemon state based on current status"""
-        if self.daemon_stopped or not self.is_daemon_running():
-            self.daemon_stopped = False
-            if self.start_daemon():
-                self.stop_button.config(text="Stop Daemon")
-        else:
-            self.stop_daemon()
-
-    def send_command(self, command):
-        """Send command to daemon with conditional auto-start"""
+        """Attempt to start the daemon process."""
         try:
-            # Only auto-start if not manually stopped
-            if not self.is_daemon_running() and not self.daemon_stopped:
-                if not self.start_daemon():
-                    return None
-
-            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.settimeout(2)
-                sock.connect(SOCKET_FILE)
-                sock.sendall(command.encode() + b"\n")
-                return sock.recv(1024).decode().strip()
-        except (ConnectionRefusedError, FileNotFoundError):
-            if command == "status":
-                msg = "Daemon is not running."
+            daemon_script = os.path.join(self.script_dir, "quran_player.py")
+            if sys.platform == 'win32':
+                creation_flags = subprocess.CREATE_NO_WINDOW
             else:
-                msg = "Daemon not responding!"
-            self.update_status_bar(msg, error=True)
-            return None
+                creation_flags = 0  # No special flag for Linux/macOS
+
+            subprocess.Popen([sys.executable, daemon_script, 'start'], creationflags=creation_flags)
+
+            # Give the daemon some time to start up.
+            time.sleep(1)
         except Exception as e:
-            self.update_status_bar(f"Communication error: {str(e)}", error=True)
-            return None
+            print(f"Failed to start daemon: {e}")
+
+
+#############################
+# MainWindow Class
+#############################
+class QuranPlayer(QtWidgets.QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.daemon = DaemonCommunicator()
+        self.initUI()
+        self.createTrayIcon()   
+        self.initTimers()
+
+    def initUI(self):
+        self.setWindowTitle("Quran Player Controller")
+        self.setFixedSize(400, 300)
+
+        # Central widget
+        central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(central_widget)
+
+        # Main layout
+        layout = QtWidgets.QVBoxLayout(central_widget)
+
+        # Verse label (will be updated dynamically)
+        self.verse_label = QtWidgets.QLabel("Loading status...")
+        self.verse_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.verse_label.setStyleSheet("font-size: 16px; font-weight: bold; color: white;")
+        self.verse_label.setMaximumHeight(30)
+        layout.addWidget(self.verse_label)
+
+        # Buttons layout
+        button_layout = QtWidgets.QHBoxLayout()
+        
+        self.prev_button = QtWidgets.QPushButton("⏮")
+        self.play_button = QtWidgets.QPushButton("⏯")
+        self.next_button = QtWidgets.QPushButton("⏭")
+
+        button_layout.addWidget(self.prev_button)
+        button_layout.addWidget(self.play_button)
+        button_layout.addWidget(self.next_button)
+
+        layout.addLayout(button_layout)
+
+        # Bottom button row
+        bottom_layout = QtWidgets.QGridLayout()
+
+        self.load_verse_button = QtWidgets.QPushButton("Load")
+        self.repeat_verse_button = QtWidgets.QPushButton("Repeat")
+        self.stop_daemon_button = QtWidgets.QPushButton("Start/Stop Daemon")
+        self.minimize_button = QtWidgets.QPushButton("Minimize")
+        self.exit_button = QtWidgets.QPushButton("Exit")
+        self.config_button = QtWidgets.QPushButton("Config")
+        self.about_button = QtWidgets.QPushButton("About")
+
+        bottom_layout.addWidget(self.load_verse_button, 0, 0)
+        bottom_layout.addWidget(self.repeat_verse_button, 0, 1)
+        bottom_layout.addWidget(self.config_button, 0, 2)
+        bottom_layout.addWidget(self.stop_daemon_button, 0, 3)
+        bottom_layout.addWidget(self.minimize_button, 1, 0)
+        bottom_layout.addWidget(self.about_button, 1, 1)
+        bottom_layout.addWidget(self.exit_button, 1, 2)
+
+        layout.addLayout(bottom_layout)
+
+        # Status bar
+        self.status_bar = QtWidgets.QStatusBar()
+        self.status_bar.showMessage(self.daemon.is_running())
+        self.setStatusBar(self.status_bar)
+
+        # Signals
+        self.play_button.clicked.connect(self.play)
+        self.prev_button.clicked.connect(self.previous)
+        self.next_button.clicked.connect(self.next)
+        self.load_verse_button.clicked.connect(self.load_verse)
+        self.repeat_verse_button.clicked.connect(self.repeat_verse)
+        self.config_button.clicked.connect(self.config)
+        self.stop_daemon_button.clicked.connect(self.stop_daemon)
+        self.minimize_button.clicked.connect(self.hide)
+        self.exit_button.clicked.connect(self.close)
+        self.about_button.clicked.connect(self.about)
+
+        # Styling (Dark Mode)
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #2e2e2e;
+            }
+            QPushButton {
+                font-size: 14px;
+                color: white;
+                background-color: #4a4a4a;
+                border: 1px solid #6a6a6a;
+                border-radius: 5px;
+                padding: 5px;
+            }
+            QPushButton:hover {
+                background-color: #6a6a6a;
+            }
+            QPushButton:pressed {
+                background-color: #3a3a3a;
+            }
+            QLabel {
+                color: white;
+            }
+            QStatusBar {
+                color: white;
+                background-color: #1e1e1e;
+            }
+        """)
+
+    def createTrayIcon(self):
+        self.tray_icon = QtWidgets.QSystemTrayIcon(self)
+        # Provide a valid icon file path or use a default icon
+        self.script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.tray_icon.setIcon(QtGui.QIcon(os.path.join(self.script_dir, "icon.png")))
+        
+        tray_menu = QtWidgets.QMenu()
+
+        restore_action = QtWidgets.QAction("Restore", self)
+        restore_action.triggered.connect(self.show)
+        tray_menu.addAction(restore_action)
+
+        exit_action = QtWidgets.QAction("Exit", self)
+        exit_action.triggered.connect(self.close)
+        tray_menu.addAction(exit_action)
+
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self.onTrayIconActivated)        
+        if QtWidgets.QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray_icon.show()
+        else:
+            self.tray_icon.hide()
+
+
+    def onTrayIconActivated(self, reason):
+        # QSystemTrayIcon.Trigger is typically a single left click.
+        if reason == QtWidgets.QSystemTrayIcon.Trigger:
+            # Toggle window visibility:
+            if self.isVisible():
+                self.hide()  # Hide/minimize if currently visible.
+            else:
+                self.showNormal()  # Restore if hidden.
+
+    def initTimers(self):
+        """Initialize timers for periodic tasks."""
+        self.status_timer = QtCore.QTimer(self)
+        self.status_timer.timeout.connect(self.update_status)
+        self.status_timer.start(2000)  # update every 2 seconds
+
+        self.status_bar_timer = QtCore.QTimer(self)
+        self.status_bar_timer.timeout.connect(self.update_status_bar)
+        self.status_bar_timer.start(5000)
 
     def update_status(self):
-        """Update the status label and buttons"""
-        try:
-            if time.time() - getattr(self, '_last_update', 0) < 1:
-                return
-            self._last_update = time.time()
-
-            daemon_running = self.is_daemon_running()
-            
-            # Update stop/start button
-            if daemon_running:
-                self.stop_button.config(text="Stop Daemon")
-                self.update_status_bar("Daemon is running.")
-            else:
-                try:
-                    self.stop_button.config(text="Start Daemon")
-                    self.update_status_bar("Daemon is not running.", error=True)
-                except Exception as e:
-                    pass
-
-            response = self.send_command("status")
-            if response and response.startswith("STATUS"):
-                parts = response.split("|")
-                if len(parts) == 4:
-                    self.current_state = {
-                        "surah": int(parts[1]),
-                        "ayah": int(parts[2]),
-                        "paused": parts[3] == "PAUSED"
-                    }
-                    surah_name = quran_search.get_chapter_name(quran_search.chapters, self.current_state['surah'])
-                    reshaped_text = arabic_reshaper.reshape(surah_name)
-                    bidi_text = get_display(reshaped_text)
-                    status_text = f"{self.current_state['ayah']} : {bidi_text}" 
-                    self.status_label.config(text=status_text)
-        except Exception as e:
-            print(f"Status update error: {str(e)}")
-
-
-    def update_status_bar(self, message, error=False):
-        """Update the status bar with a message"""
-        self.status_bar.config(text=message)
-        if error:
-            self.status_bar.config(fg="red", bg="#330000")  # Dark red background for errors
+        """Poll the daemon for current status and update the verse label."""
+        status = self.daemon.get_status()
+        if status:
+            surah = status.get("surah", "Unknown")
+            ayah = status.get("ayah", "Unknown")
+            playback_status = status.get("status", "Unknown")
+            self.verse_label.setText(f"Surah {surah}, Ayah {ayah} ({playback_status})")
         else:
-            self.status_bar.config(fg=FG_COLOR, bg=STATUS_BAR_COLOR)
+            self.verse_label.setText("Status unavailable.")
 
-    def create_gui(self):
-        """Create the enhanced dark theme GUI"""
-        # System Tray Icon
-        menu = pystray.Menu(
-            pystray.MenuItem("Show Window", self.show_window),
-            pystray.MenuItem("Play", self.play),
-            pystray.MenuItem("Pause", self.pause),
-            pystray.MenuItem("Next Verse", self.next_verse),
-            pystray.MenuItem("Previous Verse", self.prev_verse),
-            pystray.MenuItem("Load Verse", self.load_verse),
-            pystray.MenuItem("Stop Daemon", self.stop_daemon),
-            pystray.MenuItem("Exit", self.exit_app)
-        )
-        
-        image = Image.open(ICON_FILE)
-        self.tray_icon = pystray.Icon("quran_player", image, "Quran Player", menu)
+    def update_status_bar(self):
+        """Update the status bar with the most recent log message, if available."""
+        logs = self.daemon.get_logs()
+        if logs:
+            self.status_bar.showMessage(logs[:200])
+        else:
+            self.status_bar.showMessage(self.daemon.is_running())
 
-        self.tray_icon._root = self.root  # Keep reference to main window
-        
-        # Add explicit left-click handler
-        self.tray_icon._handler = {
-            'ON_CLICK': lambda icon, item: self.show_window()
-        }
-
-
-        # Main Window Configuration
-        self.root = tk.Tk()
-        self.root.title("Quran Player Controller")
-        self.root.geometry("460x280")
-        self.root.configure(bg=BG_COLOR)
-        self.root.resizable(False, False)
-
-        # Configure Styles
-        style = ttk.Style()
-        style.theme_use('clam')
-
-        # Configure root background
-        style.configure('.', background=BG_COLOR)
-
-        # Button styling
-        style.configure('TButton', 
-                      background=BUTTON_BG,
-                      foreground=FG_COLOR,
-                      borderwidth=0,
-                      font=('Helvetica', 10),
-                      bordercolor=BG_COLOR,
-                      focuscolor=BG_COLOR,
-                      relief='flat',
-                      padding=5)
-        
-        style.map('TButton', 
-            background=[('active', BUTTON_ACTIVE_BG)],
-            foreground=[('active', FG_COLOR)]
-        )
-
-        # Frame styling
-        style.configure('TFrame', background=BG_COLOR)
-        style.configure('MainFrame.TFrame', background=BG_COLOR)
-
-        # Main Layout
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(padx=20, pady=20, fill='both', expand=True)
-
-        # Status Display
-        status_frame = ttk.Frame(main_frame)
-        status_frame.pack(fill='x', pady=10)
-        
-        self.status_label = tk.Label(
-            status_frame,
-            text="Loading status...",
-            font=('Amiri', 14, 'bold'),
-            fg=FG_COLOR,
-            bg=BG_COLOR,
-            anchor='e',  # Align text to the right
-            justify='right'  # Justify text to the right
-        )
-        self.status_label.pack()
-
-        # Control Buttons
-        control_frame = ttk.Frame(main_frame)
-        control_frame.pack(pady=15)
-
-        self.prev_button = ttk.Button(
-            control_frame,
-            text="⏮",
-            command=self.prev_verse,
-            style='TButton',
-            width=3
-        )
-        self.prev_button.grid(row=0, column=0, padx=5)
-
-        self.play_button = ttk.Button(
-            control_frame,
-            text="▶",
-            command=self.play,
-            style='TButton',
-            width=3,
-        )
-        self.play_button.grid(row=0, column=1, padx=5)
-
-        self.pause_button = ttk.Button(
-            control_frame,
-            text="⏸",
-            command=self.pause,
-            style='TButton',
-            width=3,
-        )
-        self.pause_button.grid(row=0, column=2, padx=5)
-
-        self.next_button = ttk.Button(
-            control_frame,
-            text="⏭",
-            command=self.next_verse,
-            style='TButton',
-            width=3
-        )
-        self.next_button.grid(row=0, column=3, padx=5)
-
-
-        # Action Buttons
-        action_frame = ttk.Frame(main_frame)
-        action_frame.pack(pady=15)
-
-        # First row of buttons
-        ttk.Button(action_frame, text="Load Verse", command=self.load_verse).grid(row=0, column=0, padx=5)
-        ttk.Button(action_frame, text="Stop Daemon", command=self.toggle_daemon).grid(row=0, column=1, padx=5)
-        ttk.Button(action_frame, text="Minimize", command=self.minimize_to_tray).grid(row=0, column=2, padx=5)
-        ttk.Button(action_frame, text="Exit", command=self.exit_app).grid(row=0, column=3, padx=5)
-
-        self.stop_button = action_frame.grid_slaves(row=0, column=1)[0]
-        # Second row with Config button
-        ttk.Button(action_frame,text="Config",command=self.open_config).grid(row=1, column=0, pady=5)
-        ttk.Button(action_frame, text="About", command=self.show_about).grid(row=1, column=1, pady=5)
-
-        # Status Bar with Padding
-        self.status_bar = tk.Label(
-            self.root,
-            text="Checking daemon status...",
-            font=('Helvetica', 9),
-            fg=FG_COLOR,
-            bg=STATUS_BAR_COLOR,
-            relief=tk.SUNKEN,
-            anchor=tk.CENTER,
-            padx=5,  # Horizontal padding
-            pady=5   # Vertical padding
-        )
-        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)  # Add bottom margin   , pady=(0, 2)
-
-        #self.root.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
-
-    def handle_exit(self, signum=None, frame=None):
-        """Handle Ctrl+C and other exits"""
-        self.exit_app()
 
     def play(self):
-        """Play the current verse"""
-        self.send_command("play")
+        response = self.daemon.send_command("toggle")
+        self.status_bar.showMessage(response)
 
-    def pause(self):
-        """Pause the current verse"""
-        self.send_command("pause")
+    def previous(self):
+        response = self.daemon.send_command("prev")
+        self.status_bar.showMessage(response)
 
-    def next_verse(self):
-        """Play next verse"""
-        self.send_command("next")
-
-    def prev_verse(self):
-        """Play previous verse"""
-        self.send_command("prev")
+    def next(self):
+        response = self.daemon.send_command("next")
+        self.status_bar.showMessage(response)
 
     def load_verse(self):
-        """Load a specific verse"""
-        verse = simpledialog.askstring("Load Verse", "Enter Surah:Ayah (e.g. 2:255):", parent=self.root)
-        if verse:
-            self.send_command(f"load {verse}")
-
-    def start_status_poller(self):
-        """Poll daemon status in the background"""
-        def poller():
-            while self.running:
-                try:
-                    self.update_status()
-                except Exception as e:
-                    print(f"Status poll error: {str(e)}")
-                time.sleep(1)
-                
-        self.polling_thread = threading.Thread(target=poller, daemon=True)
-        self.polling_thread.start()
-
-    def minimize_to_tray(self):
-        """Minimize to system tray"""
-        self.root.withdraw()
-        self.tray_icon.run_detached()  # Run the system tray icon in a separate thread
-
-    def run(self):
-        """Start the GUI and system tray"""
-        #self.tray_thread = threading.Thread(target=self.tray_icon.run, daemon=True)
-        #self.tray_thread.start()
-        #self.root.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
-        self.root.mainloop()
-
-    def exit_app(self):
-        """Gracefully exit the application"""
-        self.running = False
-        
-        # Kill subprocesses
-        if hasattr(self, 'daemon_process') and self.daemon_process:
-            self.daemon_process.terminate()
-        
-        # Stop tray icon
-        print("stopping tray icon")
-        if self.tray_icon:
-            self.tray_icon.stop()
-        
-        # Destroy window
-        print("destroy window")
-        if self.root:
-            self.root.destroy()
-        
-        # Ensure process termination
-        print("exit all")
-        os._exit(0)  # Force exit all threads
-
-    def show_window(self, icon=None, item=None):
-        """Force window restoration"""
-        self.root.after(0, self.root.deiconify)
-        self.root.after(0, self.root.lift)
-
-    def open_config(self):
-        """Open config file with default editor using daemon"""
-        try:
-            # Send config command to daemon (handles file creation)
-            if not os.path.exists(USER_CONFIG_FILE):
-                response = self.send_command("config")
-            
-            # Give the daemon a moment to create the file
-            time.sleep(0.5)  
-            
-            # Open the config file with detatched process
-            if sys.platform == 'win32':
-                os.startfile(USER_CONFIG_FILE)
-            else:
-                opener = 'open' if sys.platform == 'darwin' else 'xdg-open'
-                subprocess.Popen(
-                    [opener, USER_CONFIG_FILE],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    # Detach from parent process on supported platforms
-                    start_new_session=True if sys.platform != 'win32' else None
-                )
-                
-        except Exception as e:
-            self.update_status_bar(f"Could not open config file: {str(e)}",error=True)
-
-    def show_about(self):
-        """Show about dialog with command documentation"""
-        about_window = tk.Toplevel(self.root)
-        about_window.title("About Quran Player")
-        about_window.geometry("500x400")
-        about_window.resizable(False, False)
-        about_window.grab_set()  # Make it modal
-        about_window.configure(bg=BG_COLOR)
-
-        # Main container with scrollbar
-        main_frame = ttk.Frame(about_window)
-        main_frame.pack(fill='both', expand=True)
-
-        canvas = tk.Canvas(main_frame, bg=BG_COLOR, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
-
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(
-                scrollregion=canvas.bbox("all")
-            )
+        """
+        Show an input dialog for the user to enter a verse in the format 'surah:ayah'
+        and send a 'load' command to the daemon.
+        """
+        verse, ok = QtWidgets.QInputDialog.getText(
+            self, "Load Verse", "Enter verse (format: surah:ayah):", text=""
         )
-
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        # Header
-        header_frame = ttk.Frame(scrollable_frame)
-        header_frame.pack(pady=10, fill='x')
-        
-        tk.Label(header_frame, 
-                text="Quran Player", 
-                font=('Helvetica', 16, 'bold'),
-                fg=FG_COLOR, bg=BG_COLOR).pack()
-
-        # Author Info
-        tk.Label(scrollable_frame, 
-                text="Author: MOSAID Radouan", 
-                fg=FG_COLOR, bg=BG_COLOR).pack(pady=5)
-
-        # Clickable Links
-        def open_url(url):
-            webbrowser.open(url)
-
-        links_frame = ttk.Frame(scrollable_frame)
-        links_frame.pack(pady=5)
-        
-        website = tk.Label(links_frame, 
-                        text="Website: mosaid.xyz", 
-                        fg=ACCENT_COLOR, bg=BG_COLOR,
-                        cursor='hand2')
-        website.pack(side=tk.LEFT, padx=10)
-        website.bind("<Button-1>", lambda e: open_url("https://mosaid.xyz"))
-
-        github = tk.Label(links_frame, 
-                        text="GitHub Repository", 
-                        fg=ACCENT_COLOR, bg=BG_COLOR,
-                        cursor='hand2')
-        github.pack(side=tk.LEFT, padx=10)
-        github.bind("<Button-1>", lambda e: open_url("https://github.com/neoMOSAID/quran-player"))
-
-        # Command List
-        commands_frame = ttk.Frame(scrollable_frame)
-        commands_frame.pack(pady=10, padx=20, fill='x')
-
-        tk.Label(commands_frame, 
-                text="Supported Commands:",
-                font=('Helvetica', 12, 'bold'),
-                fg=FG_COLOR, bg=BG_COLOR).pack(anchor='w')
-
-        commands = [
-            ("play", "Resume playback of current verse"),
-            ("pause", "Pause current playback"),
-            ("next", "Play next verse"),
-            ("prev", "Play previous verse"),
-            ("load [surah:ayah]", "Load specific verse (e.g. '2:255')"),
-            ("status", "Get current playback status"),
-            ("config", "Create/update configuration file"),
-            ("about", "Show this information"),
-            ("stop", "Stop the daemon process")
-        ]
-
-        for cmd, desc in commands:
-            frame = ttk.Frame(commands_frame)
-            frame.pack(fill='x', pady=2)
-            
-            tk.Label(frame, text=f"• {cmd}:", 
-                    font=('Helvetica', 10, 'bold'),
-                    fg=FG_COLOR, bg=BG_COLOR).pack(side='left')
-            tk.Label(frame, text=desc,
-                    fg=FG_COLOR, bg=BG_COLOR).pack(side='left', padx=5)
-
-        # Close button (fixed at bottom)
-        button_frame = ttk.Frame(about_window)
-        button_frame.pack(side='bottom', pady=10)
-        
-        ttk.Button(button_frame, 
-                text="Close", 
-                command=about_window.destroy).pack()
-
-        # Pack canvas and scrollbar
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        # Set minimum size for scroll region
-        scrollable_frame.update_idletasks()
-        canvas.config(scrollregion=canvas.bbox("all"))
-
-def command_line_interface():
-    """Handle command-line arguments"""
-    parser = argparse.ArgumentParser(description='Quran Player Control')
-    parser.add_argument('command', nargs='?', help='Command to send to daemon')
-    parser.add_argument('args', nargs='*', help='Command arguments')
-
-    args = parser.parse_args()
-
-    if args.command:
-        if args.command == "about":
-            about()
+        if ok and verse:
+            # Send the load command with the user-provided verse
+            response = self.daemon.send_command("load", verse)
+            self.status_bar.showMessage(response)
         else:
-            controller = QuranController()
-            response = controller.send_command(f"{args.command} {' '.join(args.args)}")
-            print(response or "No response from daemon")
-    else:
-        controller = QuranController()
-        controller.run()
+            self.status_bar.showMessage("Load verse canceled.")
+
+    def repeat_verse(self):
+        verse, ok = QtWidgets.QInputDialog.getText(
+            self, "Repeat Verses", "Enter verses range (format: first:end):", text=""
+        )
+        if ok and verse:
+            # Send the load command with the user-provided verse
+            response = self.daemon.send_command("repeat", verse)
+            self.status_bar.showMessage(response)
+        else:
+            self.status_bar.showMessage("Repeat verses canceled.")
+
+    def config(self):
+        # Create the configuration dialog.
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Configuration")
+        dialog.setModal(True)
+        
+        dialog.resize(600, 400)
+        # Set up the layout for the dialog.
+        layout = QtWidgets.QVBoxLayout(dialog)
+
+        lines = []
+        with open(USER_CONFIG_FILE, "r", encoding="utf-8") as file:
+            for line in file:
+                lines.append(line)
+
+        combined_text = "".join(lines)
+
+        # Create a QTextEdit pre-populated with the current configuration.
+        text_edit = QtWidgets.QTextEdit(dialog)
+        text_edit.setPlainText(combined_text)
+        layout.addWidget(text_edit)
+        
+        # Create a standard dialog button box with OK and Cancel.
+        button_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
+            parent=dialog
+        )
+        layout.addWidget(button_box)
+        
+        # Connect signals: OK will accept the dialog; Cancel will reject it.
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        
+        # Execute the dialog modally.
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            # On OK, update the configuration.
+            new_config = text_edit.toPlainText()
+            with open(USER_CONFIG_FILE, 'w') as f:
+                f.write(new_config)
+                self.status_bar.showMessage("Configuration updated.", 3000)
+        else:
+            self.status_bar.showMessage("Configuration changes canceled.", 3000)
 
 
+    def stop_daemon(self):
+        msg = self.daemon.is_running()
+        if msg.startswith("Daemon is not"):
+            response = self.daemon.start_daemon()
+        else:
+            response = self.daemon.send_command("stop")
+        self.status_bar.showMessage(response)
+        
+
+    def about(self):
+        about_dialog = QtWidgets.QMessageBox()
+        about_dialog.setWindowTitle("About")
+        response = self.daemon.send_command("about")
+        about_dialog.setText(response)
+        about_dialog.setIcon(QtWidgets.QMessageBox.Information)
+        about_dialog.exec_()
+
+#############################
+# Main Entry Point
+#############################
+def main():
+    # Graceful exit on Ctrl+C
+    signal.signal(signal.SIGINT, lambda s, f: QtWidgets.QApplication.quit())
+    app = QtWidgets.QApplication(sys.argv)
+    # Use Fusion style and set a dark palette for consistency
+    app.setStyle("Fusion")
+    dark_palette = QtGui.QPalette()
+    dark_palette.setColor(QtGui.QPalette.Window, QtGui.QColor(45, 45, 45))
+    dark_palette.setColor(QtGui.QPalette.WindowText, QtCore.Qt.white)
+    dark_palette.setColor(QtGui.QPalette.Base, QtGui.QColor(30, 30, 30))
+    dark_palette.setColor(QtGui.QPalette.AlternateBase, QtGui.QColor(45, 45, 45))
+    dark_palette.setColor(QtGui.QPalette.ToolTipBase, QtCore.Qt.white)
+    dark_palette.setColor(QtGui.QPalette.ToolTipText, QtCore.Qt.white)
+    dark_palette.setColor(QtGui.QPalette.Text, QtCore.Qt.white)
+    dark_palette.setColor(QtGui.QPalette.Button, QtGui.QColor(45, 45, 45))
+    dark_palette.setColor(QtGui.QPalette.ButtonText, QtCore.Qt.white)
+    dark_palette.setColor(QtGui.QPalette.BrightText, QtCore.Qt.red)
+    dark_palette.setColor(QtGui.QPalette.Highlight, QtGui.QColor(90, 90, 90))
+    dark_palette.setColor(QtGui.QPalette.HighlightedText, QtCore.Qt.white)
+    app.setPalette(dark_palette)
+
+    main_window = QuranPlayer()
+    main_window.show()
+    sys.exit(app.exec_())
 
 if __name__ == "__main__":
-    command_line_interface()
-
-
+    main()

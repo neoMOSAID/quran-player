@@ -18,16 +18,35 @@ Usage:
 import sys
 import os
 import subprocess
+from PyQt5 import QtWidgets, QtCore, QtGui
+
+def get_config_dir():
+    if sys.platform.startswith("win"):
+        # On Windows, use the APPDATA folder.
+        base_dir = os.environ.get("APPDATA", os.path.join(os.path.expanduser("~"), "AppData", "Roaming"))
+        userconfdir = os.path.join(base_dir, "quran-player")
+    elif sys.platform == "darwin":
+        # On macOS, configuration files are often stored in Application Support.
+        userconfdir = os.path.expanduser("~/Library/Application Support/quran-player")
+    else:
+        # On Linux and other Unix-like OSes, use the .config directory.
+        userconfdir = os.path.expanduser("~/.config/quran-player")
+    return userconfdir
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-USER_CONFIG_DIR = os.path.expanduser("~/.config/quran-player")
+USER_CONFIG_DIR = get_config_dir()
 SIMPLIFIED_OUT_FILE = os.path.join(USER_CONFIG_DIR, "search_result_simplified.txt") 
 UTHMANI_OUT_FILE = os.path.join(USER_CONFIG_DIR, "search_result_uthmani.txt") 
  
 def read_chapters(filename):
+    if not os.path.exists(filename):
+        print(f"Warning: Missing file {filename}", file=sys.stderr)
+        return []
+
     with open(filename, 'r', encoding='utf-8') as f:
         return [line.strip() for line in f]
+
 
 def read_uthmani(filename):
     uthmani = {}
@@ -67,10 +86,14 @@ def get_current_layout():
         return None
 
 def set_layout(layout):
+    if sys.platform.startswith("win"):
+        return  # Windows doesn't use `setxkbmap`
+
     try:
         subprocess.run(['setxkbmap', layout], check=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
+
 
 def get_chapter_name(chapters,surah):
     return chapters[surah - 1] if surah <= len(chapters) else 'Surah'
@@ -95,16 +118,107 @@ def command_line_mode(surah, start_ayah, end_ayah, uthmani, simplified, chapters
     
     # Write to both files
     if uthmani_output:
-        with open(UTHMANI_OUT_FILE, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(uthmani_output))
-    
+        try:
+            with open(UTHMANI_OUT_FILE, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(uthmani_output))
+        except IOError as e:
+            print(f"Error writing to {UTHMANI_OUT_FILE}: {e}", file=sys.stderr)
+
+        
     if simplified_output:
-        with open(SIMPLIFIED_OUT_FILE, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(simplified_output))
+        try:
+            with open(SIMPLIFIED_OUT_FILE, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(simplified_output))
+        except IOError as e:
+            print(f"Error writing to {SIMPLIFIED_OUT_FILE}: {e}", file=sys.stderr)
 
     return '\n'.join(uthmani_output)
 
 
+
+def get_rtl_search_input(title="بحث في القرآن", label="أدخل كلمة البحث:", default_text=""):
+    """
+    Create a dark-themed PyQt5 input dialog with RTL support for entering a search term.
+    The buttons are made a bit larger and centered if possible.
+    
+    Args:
+        title (str): The window title of the dialog.
+        label (str): The prompt label text.
+        default_text (str): Default text in the input field.
+    
+    Returns:
+        str or None: The text entered by the user, or None if canceled.
+    """
+    # Check if there is an existing QApplication instance; if not, create one.
+    app = QtWidgets.QApplication.instance()
+    created_app = False
+    if app is None:
+        app = QtWidgets.QApplication([])
+        created_app = True
+
+    # Create the input dialog.
+    input_dialog = QtWidgets.QInputDialog()
+    input_dialog.setWindowTitle(title)
+    input_dialog.setLabelText(label)
+    input_dialog.setTextValue(default_text)
+    
+    # Enforce Right-To-Left layout.
+    input_dialog.setLayoutDirection(QtCore.Qt.RightToLeft)
+    
+    # Set a custom font (for example, Amiri at size 14).
+    font = QtGui.QFont("Amiri", 14)
+    input_dialog.setFont(font)
+    
+    # Apply a dark theme style sheet with bigger buttons.
+    dark_style = """
+    QDialog, QWidget {
+        background-color: #2e2e2e;
+        color: #ffffff;
+    }
+    QLineEdit {
+        background-color: #3e3e3e;
+        border: 1px solid #555555;
+        color: #ffffff;
+    }
+    QLabel {
+        color: #ffffff;
+    }
+    QPushButton {
+        background-color: #3e3e3e;
+        border: 1px solid #555555;
+        color: #ffffff;
+        padding: 5px;
+        min-width: 80px;
+        min-height: 30px;
+    }
+    QPushButton:hover {
+        background-color: #4e4e4e;
+    }
+    QPushButton:pressed {
+        background-color: #1e1e1e;
+    }
+    """
+    input_dialog.setStyleSheet(dark_style)
+    
+    # Optionally, set a fixed size for the dialog.
+    input_dialog.resize(400, 150)
+    
+    # Attempt to center the dialog's buttons if available.
+    button_box = input_dialog.findChild(QtWidgets.QDialogButtonBox)
+    if button_box:
+        button_box.setCenterButtons(True)
+    
+    # Execute the dialog modally.
+    if input_dialog.exec_() == QtWidgets.QDialog.Accepted:
+        search_term = input_dialog.textValue().strip()
+    else:
+        search_term = None
+
+    # If we created the QApplication, quit it.
+    if created_app:
+        app.quit()
+    
+    return search_term
 
 
 def interactive_mode(uthmani, simplified, chapters):
@@ -113,33 +227,7 @@ def interactive_mode(uthmani, simplified, chapters):
     
     try:
         set_layout('ara')
-        
-        # Create RTL search dialog
-        yad_cmd = [
-            'yad', '--entry',
-            '--title=بحث في القرآن',
-            '--text=أدخل كلمة البحث:',
-            '--entry-text=',
-            '--width=400',
-            '--height=120',
-            '--rtl',
-            '--text-align=right',
-            '--fontname=Amiri 14',
-            '--window-icon=system-search'
-        ]
-        
-        result = subprocess.run(
-            yad_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            encoding='utf-8'
-        )
-        
-        if result.returncode != 0:
-            return
-            
-        search_term = result.stdout.strip()
+        search_term = get_rtl_search_input()
         
     finally:
         if original_layout:
@@ -185,10 +273,13 @@ def interactive_mode(uthmani, simplified, chapters):
             f.write('\n'.join(simplified_results))
 
 
-
-chapters = read_chapters(os.path.join(SCRIPT_DIR, "quran-text/chapters.txt"))
-uthmani = read_uthmani(os.path.join(SCRIPT_DIR, "quran-text/uthmani.txt"))   
-simplified = read_simplified(os.path.join(SCRIPT_DIR, "quran-text/simplified.txt"))  
+try:
+    chapters = read_chapters(os.path.join(SCRIPT_DIR, "quran-text/chapters.txt"))
+    uthmani = read_uthmani(os.path.join(SCRIPT_DIR, "quran-text/uthmani.txt"))
+    simplified = read_simplified(os.path.join(SCRIPT_DIR, "quran-text/simplified.txt"))
+except FileNotFoundError as e:
+    print(f"Error: Required file missing: {e}", file=sys.stderr)
+    sys.exit(1)
 
 
 def main():

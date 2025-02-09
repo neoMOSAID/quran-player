@@ -1,0 +1,221 @@
+===================================================================
+                       Quran Player Daemon Manual
+                            Version: v1.3.0
+                           Date: Feb 2025
+===================================================================
+
+NAME
+    quran-daemon - Quran Player Daemon
+
+SYNOPSIS
+    quran-daemon [COMMAND] [ARGUMENTS]...
+
+DESCRIPTION
+    The Quran Player Daemon is a background service that provides Quranic verse
+    playback with synchronized visual display and Arabic text rendering. It supports
+    verse-by-verse audio playback with auto-advance, persistent playback state across
+    sessions, repeat functionality, and an optional system tray GUI controller.
+
+    The daemon communicates with a GUI controller via a control socket (using UNIX domain
+    sockets on Linux/macOS or TCP/Named Pipes on Windows) and is configured via an
+    INI-style configuration file.
+
+COMMANDS
+    start
+        Start the daemon. This initializes the service, binds the control socket, and
+        begins listening for client commands.
+
+    stop
+        Stop the daemon. This causes the daemon to shut down gracefully, releasing all
+        resources and cleaning up socket and PID files.
+
+    play
+        Resume audio playback.
+
+    pause
+        Pause the current playback.
+
+    toggle
+        Toggle between play and pause.
+
+    next
+        Advance to the next verse.
+
+    prev
+        Return to the previous verse.
+
+    load
+        Load a specific verse. The command expects an argument in the format
+        surah:ayah (for example, "2:255").
+
+    repeat
+        Repeat a range of verses. Provide the range in the format
+        start:end (for example, "10:15"). Note that issuing a play or load command
+        cancels repeat mode.
+
+    status
+        Display the current playback status, including the surah and ayah numbers and
+        playback state.
+
+    config
+        Generate the default configuration file in the user configuration directory.
+
+    cleanup
+        Remove orphaned runtime files (e.g., stale PID or socket files).
+
+    info
+        Display detailed information about daemon status, configuration settings,
+        file integrity, and system information.
+
+    help
+        Display a help message with a summary of available commands.
+
+    about
+        Display program information, including version, project links, and license details.
+
+CONFIGURATION
+    The daemon uses an INI-style configuration file. On Linux/macOS, the file is typically
+    located at:
+        ~/.config/quran-player/config.ini
+    On Windows, it is stored in the APPDATA folder.
+
+    The configuration file is divided into two main sections: [daemon] and [image].
+
+    -----------------------------------------------------------------
+    [daemon] Section
+    -----------------------------------------------------------------
+    MAX_LOG_SIZE
+        Maximum size (in bytes) of the log file before rotation occurs.
+        Default: 1000000.
+
+    LOG_LEVEL
+        Log verbosity level. Possible values are:
+        CRITICAL, ERROR, WARNING, INFO, DEBUG, or DISABLED.
+        Default: INFO.
+
+    FILES_DIRECTORY
+        The directory where the audio files are stored. If not specified, a default
+        directory (e.g., within the user configuration directory) is used.
+
+    -----------------------------------------------------------------
+    [image] Section
+    -----------------------------------------------------------------
+    ENABLE
+        Enable or disable image display. Accepts "yes" or "no". Default is "yes" on Linux
+        and "no" on other platforms.
+
+    DEFAULT_RESOLUTION
+        Default resolution for the generated image in the format WIDTHxHEIGHT (e.g., "1240x170").
+
+    FONT_FILE
+        Path to the Arabic font file used for rendering. By default, the "arabic-font.ttf"
+        in the script or user configuration directory is used.
+
+    FONT_SIZE
+        Font size for rendering the text. Default: 48.
+
+    IMAGE_WIDTH
+        Width of the generated image in pixels. Default: 1240.
+
+    WRAP_WIDTH
+        Maximum number of characters per line before wrapping. Default: 170.
+
+    VERTICAL_PADDING
+        Vertical padding (in pixels) added to the top and bottom of the image. Default: 20.
+
+    BG_COLOR
+        Background color as a comma-separated RGBA string (for example, "0,0,0,0").
+        Default: 0,0,0,0.
+
+    TEXT_COLOR
+        Text color as a comma-separated RGBA string (for example, "255,255,255,255").
+        Default: 255,255,255,255.
+
+    HIGHLIGHT_COLOR
+        Highlight color for indicating a specific line, as a comma-separated RGBA string
+        (for example, "255,0,0,255").
+        Default: 255,0,0,255.
+
+FILES
+    quran_player.py
+        The main daemon script.
+
+    default_config.ini
+        Default configuration file shipped with the daemon.
+
+    config.ini
+        User configuration file. Typically located in ~/.config/quran-player/ (Linux/macOS)
+        or in the APPDATA folder (Windows).
+
+    daemon.sock or \\.\pipe\quran-daemon (Windows)
+        The control socket used for inter-process communication.
+
+    daemon.pid
+        File storing the daemon's process ID.
+
+    daemon.log
+        Log file for daemon events.
+
+USAGE EXAMPLES
+    Start the daemon:
+        quran-daemon start
+
+    Stop the daemon:
+        quran-daemon stop
+
+    Toggle playback:
+        quran-daemon toggle
+
+    Load a specific verse:
+        quran-daemon load 2:255
+
+    Repeat a range of verses:
+        quran-daemon repeat 10:15
+
+    Display status:
+        quran-daemon status
+
+    Generate a new configuration file:
+        quran-daemon config
+
+    Display help:
+        quran-daemon help
+
+ENVIRONMENT VARIABLES
+    The following environment variables can override default configuration values:
+
+    PYTHON_IMAGE_WIDTH
+        Overrides the default image width.
+
+    PYTHON_IMAGE_WRAP_WIDTH
+        Overrides the default wrap width.
+
+    PYTHON_IMAGE_FONT_SIZE
+        Overrides the default font size.
+
+    PYTHON_IMAGE_FONT
+        Overrides the default font family.
+
+    PYTHON_IMAGE_BG_COLOR
+        Overrides the default background color.
+
+    PYTHON_IMAGE_TEXT_COLOR
+        Overrides the default text color.
+
+    PYTHON_IMAGE_HIGHLIGHT_COLOR
+        Overrides the default highlight color.
+
+    PYTHON_IMAGE_VERTICAL_PADDING
+        Overrides the default vertical padding.
+
+BUGS
+    Report bugs and issues via the project's GitHub issue tracker:
+        https://github.com/neoMOSAID/quran-player/issues
+
+AUTHOR
+    Developed by neoMOSAID.
+
+COPYRIGHT
+    This software is released under the GPLv3 License.
+
+===================================================================

@@ -37,13 +37,11 @@ install_dependencies() {
         sudo apt install -y \
             python3-venv \
             python3-pip \
-            python3-tk \
             feh \
             pulseaudio-utils
     elif command -v pacman &> /dev/null; then
         sudo pacman -Sy --noconfirm \
             python \
-            tk \
             feh \
             pulseaudio
     else
@@ -59,8 +57,7 @@ copy_application_files() {
     
     # Core files
     cp -v quran_player.py quran_gui.py quran_search.py arabic_topng.py \
-        requirements.txt arabic-font.ttf "$INSTALL_DIR/"
-
+        requirements.txt arabic-font.ttf load.py "$INSTALL_DIR/"
     # Assets
     [ -f icon.png ] && cp -v icon.png "$INSTALL_DIR/"
     [ -d "quran-text" ] && cp -rv quran-text "$INSTALL_DIR/"
@@ -98,7 +95,8 @@ case "\$1" in
         response=\$("$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/quran_player.py" stop )
         if echo "\$response" | grep 'not running' >/dev/null ; then
             echo "not runnin"
-            else echo "\$response"
+        else 
+            echo "\$response"
         fi 
         [ -f \$PID_FILE ] && kill -9 \$(cat \$PID_FILE) 2>/dev/null && rm \$PID_FILE
         ;;
@@ -116,7 +114,7 @@ PID_FILE="\$HOME/.quran-player/.gui_pid"
 echo \$\$ > \$PID_FILE
 trap "rm \$PID_FILE" EXIT
 
-"$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/quran_gui.py" "\$@"
+"$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/quran_gui.py" &
 EOF
 
     # quran-search
@@ -131,7 +129,13 @@ EOF
 "$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/arabic_topng.py" \$@
 EOF
 
-    sudo chmod +x $BIN_DIR/quran-daemon $BIN_DIR/quran-gui $BIN_DIR/quran-search
+    # loader
+    sudo tee $BIN_DIR/quran-loader > /dev/null <<EOF
+#!/bin/bash
+"$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/load.py" \$@
+EOF
+
+    sudo chmod +x $BIN_DIR/quran-daemon $BIN_DIR/quran-gui $BIN_DIR/quran-search $BIN_DIR/quran-loader $BIN_DIR/arabic-topng
 }
 
 # Create desktop entry
@@ -153,7 +157,7 @@ EOF
     update-desktop-database "$(dirname "$DESKTOP_FILE")"
 }
 
-# In create_cli_wrappers()
+# Install manpage
 install_manpage() {
     echo -e "${GREEN}Installing manpage...${NC}"
     sudo mkdir -p /usr/local/share/man/man1
@@ -176,16 +180,14 @@ main_install() {
     echo -e "Usage:"
     echo -e "  Start daemon:                quran-daemon start"
     echo -e "  Control player directly:     quran-daemon [play|pause|next|prev|stop]"
-    echo -e "  Control player through gui:  quran-gui [play|pause|next|prev|stop]"
     echo -e "  Launch GUI:                  quran-gui" 
-    echo -e "  Stop GUI:                    quran-gui stop"
 }
 
 # Uninstall
 uninstall() {
     echo -e "${RED}Uninstalling...${NC}"
     # Kill processes using stored PIDs
-    [ -f "$REAL_HOME/.quran-player/control/daemon.pid" ] && kill -9 $(cat "$REAL_HOME/.quran-player/control/daemon.pid") 2>/dev/null
+    [ -f "$REAL_HOME/.quran-player/.daemon_pid" ] && kill -9 $(cat "$REAL_HOME/.quran-player/.daemon_pid") 2>/dev/null
     [ -f "$REAL_HOME/.quran-player/.gui_pid" ] && kill -9 $(cat "$REAL_HOME/.quran-player/.gui_pid") 2>/dev/null
     
     # Remove all files
@@ -199,6 +201,8 @@ uninstall() {
     sudo rm -f $BIN_DIR/arabic-topng
     echo "removing install dir $INSTALL_DIR"
     rm -rf "$INSTALL_DIR"
+    echo "removing user config dir $INSTALL_DIR"
+    rm -rf "$CONFIG_DIR"
     echo "removing desktop file $DESKTOP_FILE"
     rm -f "$DESKTOP_FILE"
     
@@ -212,8 +216,9 @@ uninstall() {
         sudo mandb >/dev/null
     fi
     
-    echo -e "${GREEN}Uninstallation complete!${NC}"
+    echo -e "${GREEN}Uninstallation complete!${NC},  nothing left behind"
 }
+
 # Argument handling
 case "$1" in
     --uninstall)

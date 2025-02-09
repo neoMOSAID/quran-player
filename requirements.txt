@@ -1,9 +1,10 @@
-arabic-reshaper==3.0.0
 pillow==11.1.0
 portalocker==3.1.1
 psutil==6.1.1
 pygame==2.6.1
+PyQt5==5.15.11
+PyQt5-Qt5==5.15.16
+PyQt5_sip==12.17.0
 pystray==0.19.5
-python-bidi==0.6.3
 python-xlib==0.33
 six==1.17.0

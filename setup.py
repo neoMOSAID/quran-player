@@ -25,7 +25,8 @@ if not sys.platform.startswith("win"):
 # Configuration
 APP_NAME = "quran-player"
 INSTALL_DIR = Path(os.getenv("APPDATA")) / APP_NAME
-SCRIPTS_DIR = Path.home() / "AppData" / "Local" / "Microsoft" / "WindowsApps"
+# Use a subdirectory (bin) within the install directory for CLI wrappers instead of WindowsApps.
+SCRIPTS_DIR = INSTALL_DIR / "bin"
 DESKTOP_DIR = Path.home() / "Desktop"
 DESKTOP_FILE = DESKTOP_DIR / "Quran Player.lnk"
 VENV_DIR = INSTALL_DIR / "env"
@@ -119,6 +120,9 @@ def install_dependencies():
 def create_cli_wrappers():
     """Create command-line interface wrappers"""
     logger.info("Creating command-line wrappers...")
+    
+    # Ensure SCRIPTS_DIR exists
+    SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
     
     wrappers = {
         "quran-daemon.bat": f"@echo off\n\"{PYTHON_EXE}\" \"{INSTALL_DIR / 'quran_player.py'}\" %*",

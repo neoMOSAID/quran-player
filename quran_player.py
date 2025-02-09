@@ -63,17 +63,32 @@ import tempfile
 import shutil
 import subprocess
 import signal
-
+from collections import deque
 
 import quran_search
 import arabic_topng
+
+
+def get_config_dir():
+    if sys.platform.startswith("win"):
+        # On Windows, use the APPDATA folder.
+        base_dir = os.environ.get("APPDATA", os.path.join(os.path.expanduser("~"), "AppData", "Roaming"))
+        userconfdir = os.path.join(base_dir, "quran-player")
+    elif sys.platform == "darwin":
+        # On macOS, configuration files are often stored in Application Support.
+        userconfdir = os.path.expanduser("~/Library/Application Support/quran-player")
+    else:
+        # On Linux and other Unix-like OSes, use the .config directory.
+        userconfdir = os.path.expanduser("~/.config/quran-player")
+    return userconfdir
+
 
 # Define global variables
 os.environ['SDL_AUDIODEVICE'] = 'default'
 # directories
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONTROL_DIR =  os.path.join(SCRIPT_DIR, "control")
-USER_CONFIG_DIR = os.path.expanduser("~/.config/quran-player")
+USER_CONFIG_DIR = get_config_dir()
 
 # daemon files
 LOG_FILE = os.path.join(CONTROL_DIR, "daemon.log")
@@ -82,13 +97,19 @@ if sys.platform == 'win32':
     SOCKET_FILE = r'\\.\pipe\quran-daemon'
 else:
     SOCKET_FILE = os.path.join(CONTROL_DIR, "daemon.sock")
+
+
 PID_FILE = os.path.join(CONTROL_DIR, "daemon.pid")
 LOCK_FILE = os.path.join(CONTROL_DIR, "daemon.lock")
 DEFAULT_CONFIG_FILE = os.path.join(SCRIPT_DIR, "default_config.ini")
 
 # user files
 USER_CONFIG_FILE = os.path.join(USER_CONFIG_DIR, "config.ini")
-STATE_FILE =  os.path.join(USER_CONFIG_DIR, "playback_state.ini")
+if sys.platform == "win32":
+    STATE_FILE = os.path.join(os.environ["APPDATA"], "quran-player", "playback_state.ini")
+else:
+    STATE_FILE = os.path.join(USER_CONFIG_DIR, "playback_state.ini")
+
 
 AUDIO_SOURCE_DIR = os.path.join(SCRIPT_DIR, "audio")
 SAMPLE_DIR = os.path.join(USER_CONFIG_DIR, "sample")
@@ -114,6 +135,7 @@ CRITICAL_FLAGS = {"CRITICAL", "ERROR"}
 
 # Optional non-critical logs (can be disabled)
 NON_CRITICAL_FLAGS = {"INFO", "DEBUG", "WARNING", "SYSTEM"}
+
 
 def ensure_files(target_dir):
     """Ensure required directories exist and copy necessary files if missing."""
@@ -148,7 +170,7 @@ class Daemon:
         self.audio_lock = threading.Lock()
         self.log_lock = threading.Lock()
         self.valid_commands =["play", "pause", "toggle", "stop", "load", "repeat",
-                              "prev", "next","start","status", "config"]
+                              "prev", "next","start","status", "config", "log"]
 
         # Surah-ayah count mapping (index 0 unused, 1-114 are surah numbers)
         self.surah_ayat = [
@@ -244,8 +266,8 @@ class Daemon:
         try:
             log_level_str = self.config.get("daemon", "LOG_LEVEL", fallback="INFO").upper()
         except AttributeError:
-            log_level_str = "INFO"
-            
+            log_level_str = "ERROR"
+
         log_level = LOG_LEVELS.get(log_level_str, 20)  # Default to INFO
 
         # Determine message priority
@@ -312,6 +334,8 @@ class Daemon:
     def initialize_pygame(self):
         """Safely initialize pygame resources once"""
         if not pygame.get_init() and not self.resources_initialized:
+            if sys.platform == "darwin":
+                os.environ["SDL_AUDIODRIVER"] = "coreaudio"
             pygame.init()
             pygame.mixer.init(frequency=44100, buffer=1024)
             self.resources_initialized = True
@@ -441,10 +465,21 @@ class Daemon:
                 config[section][key] = str(value)
 
         # Write to file
-        with open(USER_CONFIG_FILE, "w") as configfile:
+        with open(USER_CONFIG_FILE, "w", encoding="utf-8") as configfile:
             config.write(configfile)
         self.log_action("INFO", f"Default config generated at {USER_CONFIG_FILE}")
         return True
+    
+    def handle_log(self,args):
+        try:
+            numlines = int(args)
+            with open(LOG_FILE, "r") as file:
+                last_n_lines = deque(file, maxlen=numlines)
+
+        except:
+            return None
+        finally:
+            return '\n'.join(last_n_lines)
 
     def handle_client(self, conn):
         try:
@@ -464,8 +499,30 @@ class Daemon:
                     conn.sendall(status_response.encode() + b"\n")
                 except BrokenPipeError:
                     self.log_action("WARNING", "Client disconnected before receiving status")
-                return    
-            
+                return   
+            if command == "log":
+                if not args:
+                    conn.sendall(b"ERROR: Missing numlines\n")
+                    return
+                status_response = self.handle_logs(args)
+                try:
+                    conn.sendall(status_response.encode() + b"\n")
+                except BrokenPipeError:
+                    self.log_action("WARNING", "Client disconnected before receiving status")
+                return   
+            if command in ("about", "help"):
+                import io
+                from contextlib import redirect_stdout
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    about()  
+                about_text = buf.getvalue()
+                try:
+                    conn.sendall(about_text.encode() + b"\n")
+                except BrokenPipeError:
+                    self.log_action("WARNING", "Client disconnected before receiving about info")
+                return
+
             if command == "load":
                 if not args:
                     conn.sendall(b"ERROR: Missing surah:ayah\n")
@@ -536,10 +593,9 @@ class Daemon:
         if os.path.exists(SOCKET_FILE):
             os.remove(SOCKET_FILE)
 
-        # In handle_start()
-        if sys.platform == 'win32':
-            server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server.bind(('localhost', 58901))  # Use TCP port
+        if sys.platform == 'win32' and hasattr(socket, "AF_UNIX"):
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            server.bind(r'\\.\pipe\quran-daemon')
             server.listen(5)  
             server.settimeout(1)  
         else:
@@ -600,6 +656,7 @@ class Daemon:
     def handle_stop(self):
         """Handle stop command."""
         self.running = False
+        self.cleanup_resources()  
         self.log_action("INFO", "Shutdown initiated")
         return True
 
@@ -798,6 +855,9 @@ class Daemon:
         if self.is_paused:
             return  # ✅ Ignore if paused
 
+        if not pygame.mixer.get_init():
+            self.restart_audio_system()
+
         # ✅ Prevent rapid duplicate calls
         if hasattr(self, "_last_handled") and time.time() - self._last_handled < 0.5:
             self.log_action("INFO", "Skipping duplicate playback end trigger")
@@ -977,14 +1037,14 @@ class Daemon:
         self.repeat_start = start
         self.repeat_end = end
         self.repeat_enabled = True
+        self.is_paused = False
 
         # Adjust current ayah if outside range
         if not (start <= self.current_ayah <= end):
             self.current_ayah = start
-            self.save_playback_state()
-
         self.log_action("INFO", f"Repeat range set: {current_surah}:{start}-{end}")
-        return True
+        self.save_playback_state()
+        return self.play_audio()
 
     def handle_info(self):
         """Print detailed information about daemon status, configuration, and file integrity."""
@@ -1029,7 +1089,7 @@ class Daemon:
             "Script Directory": SCRIPT_DIR
         }
         for name, path in core_dirs.items():
-            status = "Exists" if os.path.exists(path) else "Missing"
+            status = "✅ Exists" if os.path.exists(path) else "Missing"
             info_lines.append(f"{name}: {path} ({status})")
         
         # Check Core Files
@@ -1039,7 +1099,7 @@ class Daemon:
             "Arabic Font": os.path.join(SCRIPT_DIR, "arabic-font.ttf")
         }
         for name, path in core_files.items():
-            status = "Exists" if os.path.exists(path) else "Missing"
+            status = "✅ Exists" if os.path.exists(path) else "Missing"
             info_lines.append(f"{name}: {path} ({status})")
         
         # Playback State File
@@ -1056,6 +1116,8 @@ class Daemon:
             info_lines.append(f"Daemon Log File: {LOG_FILE} ({size} bytes, Last Modified: {datetime.fromtimestamp(mtime)})")
         else:
             info_lines.append(f"Daemon Log File: {LOG_FILE} (Missing)")
+        log_level_str = self.config.get("daemon", "LOG_LEVEL", fallback="INFO").upper()
+        info_lines.append(f"Daemon Log level: {log_level_str}")
         
         # Loaded Configuration Summary
         info_lines.append("\n-- Loaded Configuration --")
@@ -1128,6 +1190,7 @@ def about():
         ("status", "Get playback status"),
         ("cleanup", "Clean up orphaned runtime files"),
         ("config", "Generate and override user config file"),
+        ("info", "info dump of all relevent data"),
         ("help", "Show this information"),
         ("about", "Show this information")
     ]
@@ -1192,6 +1255,7 @@ def print_usage():
     print("  load <surah>:<ayah>    - Load track")
     print("  repeat <start>:<end>    - repeat verses, load and play commands break repeat mode")
     print("  cleanup - Clean up files")
+    print("  info    - info dump of all data ")
     print("  about   - Print info about this daemon")
     print("  help    - Print info about this daemon")
     print("  config  - Generate default config  and override user config file")
