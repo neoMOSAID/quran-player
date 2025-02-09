@@ -154,6 +154,7 @@ class QuranPlayer(QtWidgets.QMainWindow):
         self.load_verse_button = QtWidgets.QPushButton("Load")
         self.repeat_verse_button = QtWidgets.QPushButton("Repeat")
         self.stop_daemon_button = QtWidgets.QPushButton("Start/Stop Daemon")
+        self.visit_website_button = QtWidgets.QPushButton("Visit Our Website")
         self.minimize_button = QtWidgets.QPushButton("Minimize")
         self.exit_button = QtWidgets.QPushButton("Exit")
         self.config_button = QtWidgets.QPushButton("Config")
@@ -166,6 +167,7 @@ class QuranPlayer(QtWidgets.QMainWindow):
         bottom_layout.addWidget(self.minimize_button, 1, 0)
         bottom_layout.addWidget(self.about_button, 1, 1)
         bottom_layout.addWidget(self.exit_button, 1, 2)
+        bottom_layout.addWidget(self.visit_website_button, 1, 3)
 
         layout.addLayout(bottom_layout)
 
@@ -185,6 +187,7 @@ class QuranPlayer(QtWidgets.QMainWindow):
         self.minimize_button.clicked.connect(self.hide)
         self.exit_button.clicked.connect(self.close)
         self.about_button.clicked.connect(self.about)
+        self.visit_website_button.clicked.connect(self.visit_website)
 
         # Styling (Dark Mode)
         self.setStyleSheet("""
@@ -369,12 +372,29 @@ class QuranPlayer(QtWidgets.QMainWindow):
         
 
     def about(self):
-        about_dialog = QtWidgets.QMessageBox()
+        about_dialog = QtWidgets.QMessageBox(self)
         about_dialog.setWindowTitle("About")
-        response = self.daemon.send_command("about")
-        about_dialog.setText(response)
+        about_text = """
+        <h3>Quran Player Daemon v1.3.0</h3>
+        <p>A robust daemon for Quran audio playback.</p>
+        <p>
+        <a style="color: #1E90FF;" href="https://mosaid.xyz/quran-player">https://mosaid.xyz/quran-player</a><br><br>
+        <a style="color: #1E90FF;" href="https://github.com/neoMOSAID/quran-player">https://github.com/neoMOSAID/quran-player</a>
+        </p>
+        <p>&copy; 2025 Quran Player Project - GPLv3 License</p>
+        """
+        about_dialog.setText(about_text)
+        about_dialog.resize(600, 500)
+        about_dialog.setTextFormat(QtCore.Qt.RichText)  # Enable HTML formatting.
         about_dialog.setIcon(QtWidgets.QMessageBox.Information)
         about_dialog.exec_()
+
+
+    def visit_website(self):
+        website_url = "https://mosaid.xyz/quran-player"  
+        url = QtCore.QUrl(website_url)
+        if not QtGui.QDesktopServices.openUrl(url):
+            self.status_bar.showMessage("Failed to open website.", 3000)
 
 #############################
 # Main Entry Point
