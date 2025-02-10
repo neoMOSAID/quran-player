@@ -803,8 +803,12 @@ class Daemon:
                 return False
             self.is_paused = False
             try:
-                quran_text = quran_search.command_line_mode(self.current_surah, self.current_ayah, self.current_ayah,
-                 quran_search.uthmani, quran_search.simplified, quran_search.chapters)
+                if self.current_ayah:
+                    quran_text = quran_search.command_line_mode(self.current_surah, self.current_ayah, self.current_ayah,
+                    quran_search.uthmani, quran_search.simplified, quran_search.chapters)
+                else:
+                    quran_text = "بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ"
+
                 if self.view_image:
                     self.show_verse_image(quran_text)
                 
