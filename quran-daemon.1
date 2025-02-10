@@ -88,7 +88,7 @@ Log verbosity level. Possible values are:
 \fBCRITICAL\fR, \fBERROR\fR, \fBWARNING\fR, \fBINFO\fR, \fBDEBUG\fR, or \fBDISABLED\fR.
 Default: \fBINFO\fR.
 .TP
-\fBF ILES_DIRECTORY\fR
+\fBFILES_DIRECTORY\fR
 The directory where the audio files are stored. If not specified, a default directory
 (e.g., within the user configuration directory) is used.
 .SH "Image Section"
@@ -102,11 +102,11 @@ and \fBno\fR on other platforms.
 Default resolution for the generated image in the format \fIWIDTHxHEIGHT\fR (e.g.,
 \fI1240x170\fR).
 .TP
-\fBF INT_FILE\fR
+\fBFONT_FILE\fR
 Path to the Arabic font file used for rendering. By default, the \fBarabic-font.ttf\fR
 in the script or user configuration directory is used.
 .TP
-\fBF INT_SIZE\fR
+\fBFONT_SIZE\fR
 Font size for rendering the text. Default: \fB48\fR.
 .TP
 \fBIMAGE_WIDTH\fR
@@ -141,7 +141,7 @@ Default configuration file shipped with the daemon.
 User configuration file. Typically located in \fB~/.config/quran-player/\fR (Linux/macOS)
 or in the APPDATA folder (Windows).
 .TP
-\fBdaemon.sock\fR or \fB\\.\pipe\quran-daemon\fR (Windows)
+\fBdaemon.sock\fR or \fB\\\\.\\pipe\\quran-daemon\fR (Windows)
 The control socket used for inter-process communication.
 .TP
 \fBdaemon.pid\fR
