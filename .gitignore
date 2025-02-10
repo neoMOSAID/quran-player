@@ -3,4 +3,4 @@ az
 __pycache__
 control
 pp.py
-
+.gitignore
