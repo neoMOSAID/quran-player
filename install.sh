@@ -54,10 +54,10 @@ install_dependencies() {
 copy_application_files() {
     echo -e "${GREEN}Copying application files...${NC}"
     mkdir -p "$INSTALL_DIR"
-    
     # Core files
-    cp -v quran_player.py quran_gui.py quran_search.py arabic_topng.py \
+    cp -v daemon.py config_manager.py audio_player.py quran_gui.py quran_search.py arabic_topng.py \
         requirements.txt arabic-font.ttf load.py "$INSTALL_DIR/"
+    return
     # Assets
     [ -f icon.png ] && cp -v icon.png "$INSTALL_DIR/"
     [ -d "quran-text" ] && cp -rv quran-text "$INSTALL_DIR/"
@@ -95,9 +95,9 @@ case "\$1" in
         response=\$("$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/quran_player.py" stop )
         if echo "\$response" | grep 'not running' >/dev/null ; then
             echo "not runnin"
-        else 
+        else
             echo "\$response"
-        fi 
+        fi
         [ -f \$PID_FILE ] && kill -9 \$(cat \$PID_FILE) 2>/dev/null && rm \$PID_FILE
         ;;
     *)
@@ -126,13 +126,13 @@ EOF
     # arabic to png
     sudo tee $BIN_DIR/arabic-topng > /dev/null <<EOF
 #!/bin/bash
-"$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/arabic_topng.py" \$@
+"$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/arabic_topng.py" "\$@"
 EOF
 
     # loader
     sudo tee $BIN_DIR/quran-loader > /dev/null <<EOF
 #!/bin/bash
-"$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/load.py" \$@
+"$INSTALL_DIR/env/bin/python" "$INSTALL_DIR/load.py" "\$@"
 EOF
 
     sudo chmod +x $BIN_DIR/quran-daemon $BIN_DIR/quran-gui $BIN_DIR/quran-search $BIN_DIR/quran-loader $BIN_DIR/arabic-topng
@@ -168,19 +168,19 @@ install_manpage() {
 
 # Main installation
 main_install() {
-    install_dependencies
+    #install_dependencies
     copy_application_files
-    create_venv
-    install_python_deps
-    create_cli_wrappers
+    #create_venv
+    #install_python_deps
+    #create_cli_wrappers
     create_desktop_entry
-    install_manpage
-    
+    #install_manpage
+
     echo -e "\n${GREEN}Installation complete!${NC}"
     echo -e "Usage:"
     echo -e "  Start daemon:                quran-daemon start"
     echo -e "  Control player directly:     quran-daemon [play|pause|next|prev|stop]"
-    echo -e "  Launch GUI:                  quran-gui" 
+    echo -e "  Launch GUI:                  quran-gui"
 }
 
 # Uninstall
@@ -189,7 +189,7 @@ uninstall() {
     # Kill processes using stored PIDs
     [ -f "$REAL_HOME/.quran-player/.daemon_pid" ] && kill -9 $(cat "$REAL_HOME/.quran-player/.daemon_pid") 2>/dev/null
     [ -f "$REAL_HOME/.quran-player/.gui_pid" ] && kill -9 $(cat "$REAL_HOME/.quran-player/.gui_pid") 2>/dev/null
-    
+
     # Remove all files
     echo "removing $BIN_DIR/quran-daemon"
     sudo rm -f $BIN_DIR/quran-daemon
@@ -205,7 +205,7 @@ uninstall() {
     rm -rf "$CONFIG_DIR"
     echo "removing desktop file $DESKTOP_FILE"
     rm -f "$DESKTOP_FILE"
-    
+
     # Remove manpage
     echo "Removing manpage"
     sudo rm -f /usr/local/share/man/man1/quran-daemon.1.gz
@@ -215,7 +215,7 @@ uninstall() {
         echo -e "${GREEN}Manpage removed successfully${NC}"
         sudo mandb >/dev/null
     fi
-    
+
     echo -e "${GREEN}Uninstallation complete!${NC},  nothing left behind"
 }
 

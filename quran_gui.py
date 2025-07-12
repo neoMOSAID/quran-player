@@ -21,9 +21,11 @@ import socket
 import subprocess
 import time
 import signal
+import json
+
 
 from PyQt5 import QtCore, QtGui, QtWidgets
-from quran_player import USER_CONFIG_FILE
+from config_manager import config 
 
 #############################
 # DaemonCommunicator Class
@@ -38,8 +40,10 @@ class DaemonCommunicator:
         """Configure socket paths based on platform."""
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         self.control_dir = os.path.join(self.script_dir, "control")
-        if sys.platform == 'win32' and hasattr(socket, "AF_UNIX"):
-            self.socket_path = r'\\.\pipe\quran-daemon'  # Use Windows Named Pipe if available
+        if sys.platform == 'win32':
+            self.socket_path = r'\\.\pipe\quran-daemon'
+            self.host = 'localhost'
+            self.port = 58901
         else:
             self.socket_path = os.path.join(self.control_dir, "daemon.sock")
 
@@ -65,25 +69,67 @@ class DaemonCommunicator:
         except Exception as e:
             return f"ERROR: {str(e)}"
 
+
     def get_status(self):
         """Retrieve current playback status from the daemon."""
         response = self.send_command("status")
-        if response.startswith("STATUS|"):
-            parts = response.split("|")
+        try:
+            data = json.loads(response)
+            playing = data.get("playing", False)
+            paused = data.get("paused", False)
+            repeat = data.get("repeat", False)
+
+            if paused:
+                status = "paused"
+            elif playing and repeat:
+                status = "playing|repeat"
+            elif playing:
+                status = "playing"
+            else:
+                status = "stopped"
+
             return {
-                "surah": parts[1],
-                "ayah": parts[2],
-                "status": parts[3],
-                "repeat": "REPEAT" in parts[3]
+                "surah": data.get("surah"),
+                "ayah": data.get("ayah"),
+                "status": status,
+                "repeat": repeat,
+                "repeat_start": data.get("repeat_start"),
+                "repeat_end": data.get("repeat_end"),
+                "daemon_running": data.get("daemon_running", False)
             }
-        return None
+        except json.JSONDecodeError:
+            return None
+
+
     
     def is_running(self):
-        response = self.send_command("status")
-        if response.startswith("STATUS|"):
-            return "Daemon is running"
-        return "Daemon is not running"
-    
+        try:
+            if self.is_windows:
+                client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                client.settimeout(1)
+                client.connect((self.host, self.port))
+                client.sendall(b"status\n")
+                response = client.recv(1024).decode().strip()
+                client.close()
+                return "Daemon is running" if response else "Daemon is not running"
+            else:
+                # More reliable check for Linux
+                if os.path.exists(self.socket_path):
+                    try:
+                        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                        client.settimeout(1)
+                        client.connect(self.socket_path)
+                        client.sendall(b"status\n")
+                        response = client.recv(1024).decode().strip()
+                        client.close()
+                        return "Daemon is running" if response else "Daemon not responding"
+                    except:
+                        return "Daemon not responding"
+                return "Daemon is not running"
+        except:
+            return "Daemon is not running"
+            
+        
     def get_logs(self, max_lines="1"):
         """Retrieve current playback status from the daemon."""
         response = self.send_command("log",max_lines)
@@ -92,7 +138,7 @@ class DaemonCommunicator:
     def start_daemon(self):
         """Attempt to start the daemon process."""
         try:
-            daemon_script = os.path.join(self.script_dir, "quran_player.py")
+            daemon_script = os.path.join(self.script_dir, "daemon.py")
             if sys.platform == 'win32':
                 creation_flags = subprocess.CREATE_NO_WINDOW
             else:
@@ -116,6 +162,8 @@ class QuranPlayer(QtWidgets.QMainWindow):
         self.initUI()
         self.createTrayIcon()   
         self.initTimers()
+        self.repeat_mode = False
+
 
     def initUI(self):
         self.setWindowTitle("Quran Player Controller")
@@ -258,7 +306,7 @@ class QuranPlayer(QtWidgets.QMainWindow):
 
         self.status_bar_timer = QtCore.QTimer(self)
         self.status_bar_timer.timeout.connect(self.update_status_bar)
-        self.status_bar_timer.start(5000)
+        self.status_bar_timer.start(7000)
 
     def update_status(self):
         """Poll the daemon for current status and update the verse label."""
@@ -268,21 +316,69 @@ class QuranPlayer(QtWidgets.QMainWindow):
             ayah = status.get("ayah", "Unknown")
             playback_status = status.get("status", "Unknown")
             self.verse_label.setText(f"Surah {surah}, Ayah {ayah} ({playback_status})")
+            # Update button text based on repeat state
+            self.repeat_verse_button.setText("Cancel Repeat" if self.repeat_mode else "Repeat")
+    
         else:
             self.verse_label.setText("Status unavailable.")
 
     def update_status_bar(self):
         """Update the status bar with the most recent log message, if available."""
-        logs = self.daemon.get_logs()
-        if logs:
-            self.status_bar.showMessage(logs[:200])
-        else:
-            self.status_bar.showMessage(self.daemon.is_running())
-
+        status_message = self.daemon.is_running()
+        
+        # Add playback status if daemon is running
+        if status_message.startswith("Daemon is running"):
+            status = self.daemon.get_status()
+            if status:
+                playback_status = status.get("status", "Unknown")
+                status_message += f" | {playback_status}"
+        
+        self.status_bar.showMessage(status_message)
 
     def play(self):
-        response = self.daemon.send_command("toggle")
+        """Send appropriate play command based on current state"""
+        # Immediately update status message
+        status = self.daemon.get_status()
+        if not status or not status.get("daemon_running", False):
+            # Start daemon if not running
+            self.status_bar.showMessage("Starting daemon...")
+            QtWidgets.QApplication.processEvents()  # Force UI update
+        
+            self.daemon.start_daemon()
+            
+            # Wait for daemon to start with timeout
+            start_time = time.time()
+            while not self.daemon.is_running().startswith("Daemon is running"):
+                if time.time() - start_time > 5:  # 5 second timeout
+                    self.status_bar.showMessage("Failed to start daemon")
+                    return
+                time.sleep(0.2)  # Short delay between checks
+                
+            # Update status bar with running message
+            self.status_bar.showMessage("Daemon started, playing...")
+            QtWidgets.QApplication.processEvents()  # Force UI update
+            time.sleep(0.5)  # Give daemon time to initialize
+            
+            # Send play command
+            response = self.daemon.send_command("play")
+        elif status.get("status") == "paused":
+            # If paused, send play to resume
+            response = self.daemon.send_command("play")
+        elif status.get("status") == "playing":
+            # If playing, send pause
+            response = self.daemon.send_command("pause")
+        else:
+            # Otherwise start playback
+            response = self.daemon.send_command("play")
+        
         self.status_bar.showMessage(response)
+        
+        # Update button text based on new state
+        new_status = self.daemon.get_status()
+        if new_status and new_status.get("status") == "playing":
+            self.play_button.setText("⏸")
+        else:
+            self.play_button.setText("⏯")
 
     def previous(self):
         response = self.daemon.send_command("prev")
@@ -294,29 +390,49 @@ class QuranPlayer(QtWidgets.QMainWindow):
 
     def load_verse(self):
         """
-        Show an input dialog for the user to enter a verse in the format 'surah:ayah'
-        and send a 'load' command to the daemon.
+        Show an input dialog for the user to enter:
+        - Surah number only (to load entire surah)
+        - Surah:ayah (to load specific verse)
         """
         verse, ok = QtWidgets.QInputDialog.getText(
-            self, "Load Verse", "Enter verse (format: surah:ayah):", text=""
+            self, 
+            "Load Verse", 
+            "Enter:\n"
+            "• Surah only (e.g., '5')\n"
+            "• Specific verse (e.g., '5:3')", 
+            text=""
         )
         if ok and verse:
-            # Send the load command with the user-provided verse
             response = self.daemon.send_command("load", verse)
             self.status_bar.showMessage(response)
         else:
             self.status_bar.showMessage("Load verse canceled.")
 
     def repeat_verse(self):
-        verse, ok = QtWidgets.QInputDialog.getText(
-            self, "Repeat Verses", "Enter verses range (format: first:end):", text=""
-        )
-        if ok and verse:
-            # Send the load command with the user-provided verse
-            response = self.daemon.send_command("repeat", verse)
+        """Toggle repeat mode or set repeat range"""
+        if self.repeat_mode:
+            # If already in repeat mode, turn it off
+            response = self.daemon.send_command("repeat_off")
             self.status_bar.showMessage(response)
+            self.repeat_mode = False
         else:
-            self.status_bar.showMessage("Repeat verses canceled.")
+            verse, ok = QtWidgets.QInputDialog.getText(
+                self, 
+                "Repeat Verses", 
+                "Enter repeat range:\n"
+                "• Surah only: '5'\n"
+                "• Current surah range: '1:7'\n"
+                "• Specific surah range: '2:1:20'", 
+                text=""
+            )
+            if ok and verse:
+                response = self.daemon.send_command("repeat", verse)
+                self.status_bar.showMessage(response)
+                self.repeat_mode = True
+            else:
+                self.status_bar.showMessage("Repeat verses canceled.")
+
+        self.repeat_verse_button.setText("Cancel Repeat" if self.repeat_mode else "Repeat")
 
     def config(self):
         # Create the configuration dialog.
@@ -329,7 +445,7 @@ class QuranPlayer(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(dialog)
 
         lines = []
-        with open(USER_CONFIG_FILE, "r", encoding="utf-8") as file:
+        with open(config.USER_CONFIG_FILE, "r", encoding="utf-8") as file:
             for line in file:
                 lines.append(line)
 
@@ -355,7 +471,7 @@ class QuranPlayer(QtWidgets.QMainWindow):
         if dialog.exec_() == QtWidgets.QDialog.Accepted:
             # On OK, update the configuration.
             new_config = text_edit.toPlainText()
-            with open(USER_CONFIG_FILE, 'w') as f:
+            with open(config.USER_CONFIG_FILE, "w", encoding="utf-8") as f:
                 f.write(new_config)
                 self.status_bar.showMessage("Configuration updated.", 3000)
         else:
@@ -365,11 +481,17 @@ class QuranPlayer(QtWidgets.QMainWindow):
     def stop_daemon(self):
         msg = self.daemon.is_running()
         if msg.startswith("Daemon is not"):
-            response = self.daemon.start_daemon()
+            self.status_bar.showMessage("Starting daemon...")
+            QtWidgets.QApplication.processEvents()  # Force UI update
+            self.daemon.start_daemon()
+            time.sleep(1)  # Give daemon time to start
+            self.status_bar.showMessage("Daemon started")
         else:
+            self.status_bar.showMessage("Stopping daemon...")
+            QtWidgets.QApplication.processEvents()  # Force UI update
             response = self.daemon.send_command("stop")
-        self.status_bar.showMessage(response)
-        
+            self.status_bar.showMessage(response)
+            
 
     def about(self):
         about_dialog = QtWidgets.QMessageBox(self)

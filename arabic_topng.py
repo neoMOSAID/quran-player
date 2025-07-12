@@ -8,6 +8,13 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 FONT_FILE = os.path.join(SCRIPT_DIR, "arabic-font.ttf")
 
 
+def safe_path(path, base_dir):
+    """Sanitize paths to prevent directory traversal"""
+    path = os.path.abspath(path)
+    if not path.startswith(base_dir):
+        raise ValueError(f"Invalid path: {path}")
+    return path
+
 def rgba_from_config(config_str):
     """Convert config RGBA string to tuple."""
     return tuple(map(int, config_str.split(',')))
