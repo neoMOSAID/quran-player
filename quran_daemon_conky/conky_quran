@@ -1,0 +1,30 @@
+conky.config = {
+    use_xft = true,
+    font = 'Amiri:size=38',
+    update_interval = 5,
+    own_window = true,
+    own_window_type = "override",
+    own_window_hints = 'undecorated,below,sticky,skip_taskbar,skip_pager',
+    own_window_transparent = true,
+    own_window_argb_visual = true,
+    own_window_argb_value = 254,
+    double_buffer = true,
+    minimum_width = 1165,
+    maximum_width = 1165,
+    default_color = "white",
+    alignment = "top_middle",
+    gap_x = 25,
+    gap_y = 140,
+    override_utf8_locale = true,
+    text_buffer_size = 2048,
+}
+
+conky.text = [[
+${alignr}${execi 0.5 /home/mosaid/.config/conky/quran_daemon/reshape_arabic.sh | head -n 1}
+${alignr}${execi 0.5 /home/mosaid/.config/conky/quran_daemon/reshape_arabic.sh | sed -n '2p'}
+${alignr}${execi 0.5 /home/mosaid/.config/conky/quran_daemon/reshape_arabic.sh | sed -n '3p'}
+${alignr}${execi 0.5 /home/mosaid/.config/conky/quran_daemon/reshape_arabic.sh | sed -n '4p'}
+${alignr}${execi 0.5 /home/mosaid/.config/conky/quran_daemon/reshape_arabic.sh | sed -n '5p'}
+${alignr}${execi 0.5 /home/mosaid/.config/conky/quran_daemon/reshape_arabic.sh | sed -n '6p'}
+]]
+
