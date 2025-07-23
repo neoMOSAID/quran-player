@@ -163,7 +163,7 @@ class QuranPlayer(QtWidgets.QMainWindow):
         self.createTrayIcon()   
         self.initTimers()
         self.repeat_mode = False
-
+        self.repeat_range = None 
 
     def initUI(self):
         self.setWindowTitle("Quran Player Controller")
@@ -316,11 +316,20 @@ class QuranPlayer(QtWidgets.QMainWindow):
             ayah = status.get("ayah", "Unknown")
             playback_status = status.get("status", "Unknown")
             self.verse_label.setText(f"Surah {surah}, Ayah {ayah} ({playback_status})")
+            
+            # Store repeat range for status bar display
+            self.repeat_range = (
+                status.get("surah"),
+                status.get("repeat_start"),
+                status.get("repeat_end")
+            ) if status.get("repeat") else None
+            
             # Update button text based on repeat state
-            self.repeat_verse_button.setText("Cancel Repeat" if self.repeat_mode else "Repeat")
+            self.repeat_verse_button.setText("Cancel Repeat" if status.get("repeat") else "Repeat")
     
         else:
             self.verse_label.setText("Status unavailable.")
+            self.repeat_range = None
 
     def update_status_bar(self):
         """Update the status bar with the most recent log message, if available."""
@@ -332,6 +341,11 @@ class QuranPlayer(QtWidgets.QMainWindow):
             if status:
                 playback_status = status.get("status", "Unknown")
                 status_message += f" | {playback_status}"
+                
+                # Add repeat range if in repeat mode
+                if self.repeat_range:
+                    surah, start, end = self.repeat_range
+                    status_message += f" | Surah {surah} ({start}-{end})"
         
         self.status_bar.showMessage(status_message)
 

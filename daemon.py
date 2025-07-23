@@ -289,8 +289,12 @@ class Daemon:
         if self.repeat_range:
             start, end = self.repeat_range
             next_ayah = ayah + 1
+            # Handle wrap-around for bismillah (verse 0)
             if next_ayah > end:
                 next_ayah = start
+                # Special handling for verse 0
+                if start == 0 and not self.audio_player.get_audio_path(surah, 0):
+                    next_ayah = 1
             return (surah, next_ayah)
         else:
             next_ayah = ayah + 1
@@ -307,22 +311,37 @@ class Daemon:
         """Play specific verse"""
         surah, ayah = verse
         audio_path = self.audio_player.get_audio_path(surah, ayah)
-        
+
         if audio_path:
-            # Generate text and image if needed
+            # Generate text
             if ayah:
-                quran_text = quran_search.command_line_mode(surah, ayah, ayah,
-                    quran_search.uthmani, quran_search.simplified, quran_search.chapters)
+                quran_text = quran_search.command_line_mode(
+                    surah, ayah, ayah,
+                    quran_search.uthmani,
+                    quran_search.simplified,
+                    quran_search.chapters
+                )
             else:
                 quran_text = "بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ"
-                
+
+            # Save to cross-platform temp file
+            tmp_path = os.path.join(tempfile.gettempdir(), "quran_verse.txt")
+            try:
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    f.write(quran_text)
+            except Exception as e:
+                self.log_action("ERROR", f"Failed to write verse to {tmp_path}: {e}")
+
+            # Optional: Show verse image
             if self.view_image:
                 self.show_verse_image(quran_text)
-                
+
             return self.audio_player.play(audio_path)
         else:
             self.log_action("ERROR", f"Audio file not found: {surah:03}{ayah:03}.mp3")
+
         return False
+
 
 
     # Simplified command handlers
@@ -338,8 +357,12 @@ class Daemon:
         return self.audio_player.stop()
         
     def handle_toggle(self):
+        """Toggle between play and pause states, start playback if stopped"""
+        if self.audio_player.state == "stopped":
+            # If stopped, start playback of current verse
+            return self.play_verse(self.current_verse)
         return self.audio_player.toggle_pause()
-
+        
     def handle_resume(self):
         """Alias for play command"""
         return self.handle_play()
@@ -716,10 +739,20 @@ class Daemon:
                 surah = int(parts[0])
                 if not (1 <= surah <= 114):
                     raise ValueError("Invalid surah number")
-                start = 1
+                
+                # Handle bismillah (verse 0) for non-surah 9
+                if surah != 9:
+                    # Check if verse 0 exists
+                    path0 = self.audio_player.get_audio_path(surah, 0)
+                    if path0:
+                        start = 0
+                    else:
+                        start = 1
+                else:
+                    start = 1
+                    
                 end = self.surah_ayat[surah]
                 # Set current surah to the specified one
-                self.current_verse = (surah, start)
                 current_surah = surah
             elif len(parts) == 2:  # Two arguments: start:end (current surah)
                 current_surah, current_ayah = self.current_verse
@@ -732,7 +765,6 @@ class Daemon:
                 if not (1 <= surah <= 114):
                     raise ValueError("Invalid surah number")
                 # Set current surah to the specified one
-                self.current_verse = (surah, start)
                 current_surah = surah
             else:
                 raise ValueError("Invalid number of arguments")
@@ -741,15 +773,18 @@ class Daemon:
             self.error_msg = f"ERROR: {str(e)}"
             return False
 
+        # Stop any ongoing playback immediately
+        if self.audio_player.state in ("playing", "paused"):
+            self.audio_player.stop()
+
         # Validate the range
         max_ayat = self.surah_ayat[current_surah]
-        
         # Special case for bismillah (verse 0)
         if start == 0:
             if current_surah == 9:  # Surah At-Tawbah has no bismillah
                 self.log_action("ERROR", "Surah 9 has no bismillah")
                 self.error_msg = "ERROR: Surah 9 has no bismillah"
-                return False
+                start = 1
             # Only allow start=0 if end is at least 0
             if end < 0:
                 end = 0
@@ -773,10 +808,13 @@ class Daemon:
                 self.error_msg = f"Missing audio file {current_surah}:{ayah}"
                 return False
 
+        # Set the repeat range
         self.repeat_range = (start, end)
+        # Move to the first ayah in the range and play it
+        self.current_verse = (current_surah, start)
         self.save_playback_state()
-        
         return self.play_verse(self.current_verse)
+
 
     def handle_info(self):
         """Print detailed information about daemon status, configuration, and file integrity."""
@@ -1016,25 +1054,97 @@ def print_usage():
     print("  help    - Print info about this daemon")
     print("  config  - Generate default config  and override user config file")
 
+
+
 if __name__ == "__main__":
+    import argparse
+    
+    # Create main parser
+    parser = argparse.ArgumentParser(
+        description='Quran Player Daemon - Audio playback with synchronized verse display',
+        epilog='© 2025 Quran Player Project - GPLv3 License'
+    )
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    
+    # Start command
+    start_parser = subparsers.add_parser('start', help='Start the daemon process')
+    
+    # Stop command
+    stop_parser = subparsers.add_parser('stop', help='Stop the daemon')
+    
+    # Play command
+    play_parser = subparsers.add_parser('play', help='Resume audio playback')
+    
+    # Pause command
+    pause_parser = subparsers.add_parser('pause', help='Pause current playback')
+
+    # toggle command
+    toggle_parser = subparsers.add_parser('toggle', help='toggle current playback')
+    
+    # Previous command
+    prev_parser = subparsers.add_parser('prev', help='Play previous verse')
+    
+    # Next command
+    next_parser = subparsers.add_parser('next', help='Play next verse')
+    
+    # Load command
+    load_parser = subparsers.add_parser('load', help='Load specific surah or verse')
+    load_parser.add_argument(
+        'verse', 
+        nargs='?', 
+        default='1:0',
+        help='Surah or verse to load (format: <surah> or <surah:ayah>)'
+    )
+    
+    # Repeat command
+    repeat_parser = subparsers.add_parser('repeat', help='Repeat verses')
+    repeat_parser.add_argument(
+        'range', 
+        nargs='?', 
+        default='off',
+        help='Verse range to repeat (format: <surah>, <start:end>, or <surah:start:end>)'
+    )
+    
+    # Directory command
+    dir_parser = subparsers.add_parser('dir', help='Change audio directory')
+    dir_parser.add_argument(
+        'path', 
+        help='Path to new audio directory'
+    )
+    
+    # Status command
+    status_parser = subparsers.add_parser('status', help='Get playback status')
+    
+    # Cleanup command
+    cleanup_parser = subparsers.add_parser('cleanup', help='Clean up orphaned runtime files')
+    
+    # Info command
+    info_parser = subparsers.add_parser('info', help='Detailed system and status information')
+    
+    # About command
+    about_parser = subparsers.add_parser('about', help='About this application')
+    
+    # Help command
+    help_parser = subparsers.add_parser('help', help='Show help information')
+    
+    # Config command
+    config_parser = subparsers.add_parser('config', help='Generate default config')
+    
+    args = parser.parse_args()
     
     daemon = Daemon()
 
-    if len(sys.argv) < 2:
-        print_usage()
+    if not args.command:
+        parser.print_help()
         sys.exit(1)
 
-    command = sys.argv[1]
-    args = sys.argv[2:]  # Get additional arguments
-
-    if command == "start":
+    if args.command == "start":
         if is_daemon_running():
             print("Error: Daemon already running")
             sys.exit(1)
         daemon.handle_start()
 
-    elif command == "stop":
-        # Special handling for stop command
+    elif args.command == "stop":
         try:
             if sys.platform == 'win32':
                 client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1045,28 +1155,27 @@ if __name__ == "__main__":
                 client.settimeout(5)
                 client.connect(config.SOCKET_FILE)
                 
-            # Send stop command
             client.sendall(b"stop\n")
-            # Get immediate response
             print(client.recv(1024).decode().strip())
         except (ConnectionRefusedError, FileNotFoundError):
             print("Error: Daemon unavailable")
             sys.exit(1)
 
-    elif command == "info":
+    elif args.command == "info":
         info_str = daemon.handle_info()
         print(info_str)
-    elif command == "cleanup":
+    elif args.command == "cleanup":
         cleanup_orphaned_files()
-    elif command == "about" or command == "help":
+        print("Orphaned files cleaned up")
+    elif args.command in ("about", "help"):
         about()
-    elif command == "config":
+    elif args.command == "config":
         daemon.handle_config()
         print(f"Generated config at {config.USER_CONFIG_FILE}")
         
-    elif command in daemon.valid_commands:
+    else:
         if not is_daemon_running():
-            print(f"Error: Daemon not running, Start it first with: quran-daemon start")
+            print(f"Error: Daemon not running. Start it first with: quran-daemon start")
             sys.exit(1)
 
         try:
@@ -1079,18 +1188,23 @@ if __name__ == "__main__":
                 client.settimeout(5)
                 client.connect(config.SOCKET_FILE)
                 
-            # Send raw command string
-            client.sendall((' '.join(sys.argv[1:])).encode() + b"\n")
-            print(client.recv(1024).decode().strip())
+            # Build command string based on arguments
+            if args.command == "load":
+                cmd_str = f"load {args.verse}"
+            elif args.command == "repeat":
+                cmd_str = f"repeat {args.range}"
+            elif args.command == "dir":
+                cmd_str = f"dir {args.path}"
+            else:
+                cmd_str = args.command
+                
+            client.sendall(cmd_str.encode() + b"\n")
+            response = client.recv(1024).decode().strip()
+            print(response)
                 
         except (ConnectionRefusedError, FileNotFoundError):
             print("Error: Daemon unavailable")
             sys.exit(1)
-            
-    else:
-        print_usage()
-        sys.exit(1)
-
 
 
 

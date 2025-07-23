@@ -77,7 +77,6 @@ class AudioPlayer:
     def play(self, audio_path):
         """Start or resume playback"""
         with self.lock:
-
             if not self.ensure_initialized():
                 return False
                     
@@ -86,6 +85,7 @@ class AudioPlayer:
                     pygame.mixer.music.unpause()
                     self.state = "playing"
                 else:
+                    # Always load new audio when stopped or starting fresh
                     pygame.mixer.music.load(audio_path)
                     pygame.mixer.music.play()
                     self.state = "playing"
