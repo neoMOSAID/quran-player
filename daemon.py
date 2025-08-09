@@ -51,7 +51,7 @@ class Daemon:
         self.state_lock = threading.Lock()
 
         self.valid_commands = ["play", "pause", "resume", "toggle", "stop", "load", 
-                                "repeat", "repeat_off", "dir",
+                                "repeat", "repeat_off", "dir","ns", "ps",
                                "prev", "next", "start", "status", "config", "log"]
 
         # Surah-ayah count mapping (index 0 unused, 1-114 are surah numbers)
@@ -329,6 +329,8 @@ class Daemon:
             try:
                 with open(tmp_path, "w", encoding="utf-8") as f:
                     f.write(quran_text)
+                    f.flush()
+                    os.fsync(f.fileno())
             except Exception as e:
                 self.log_action("ERROR", f"Failed to write verse to {tmp_path}: {e}")
 
@@ -418,6 +420,48 @@ class Daemon:
             self.log_action("ERROR", f"Invalid load format: {str(e)}")
             return False
 
+    def handle_ns(self):
+        """Handle next surah command"""
+        current_surah, _ = self.current_verse
+        next_surah = (current_surah % 114) + 1  # Wrap around to 1 after 114
+        
+        # Determine starting ayah (bismillah or not)
+        starting_ayah = 0
+        if next_surah == 9:  # Surah At-Tawbah has no bismillah
+            starting_ayah = 1
+        elif not self.audio_player.get_audio_path(next_surah, 0):
+            starting_ayah = 1  # Skip bismillah if audio doesn't exist
+            
+        return self._load_surah(next_surah, starting_ayah)
+
+    def handle_ps(self):
+        """Handle previous surah command"""
+        current_surah, _ = self.current_verse
+        prev_surah = current_surah - 1
+        if prev_surah < 1:
+            prev_surah = 114  # Wrap around to last surah
+            
+        # Determine starting ayah (bismillah or not)
+        starting_ayah = 0
+        if prev_surah == 9:  # Surah At-Tawbah has no bismillah
+            starting_ayah = 1
+        elif not self.audio_player.get_audio_path(prev_surah, 0):
+            starting_ayah = 1  # Skip bismillah if audio doesn't exist
+            
+        return self._load_surah(prev_surah, starting_ayah)
+
+    def _load_surah(self, surah, starting_ayah):
+        """Load a surah with proper repeat range handling"""
+        last_ayah = self.surah_ayat[surah]
+        
+        # Update repeat range if repeat mode is active
+        if self.repeat_range:
+            self.repeat_range = (starting_ayah, last_ayah)
+            
+        # Set current verse and play
+        self.current_verse = (surah, starting_ayah)
+        self.save_playback_state()
+        return self.play_verse(self.current_verse)
         
     def handle_stop(self):
         try:
@@ -1020,6 +1064,8 @@ def about():
         ("load <surah>", "Load entire surah starting from beginning"),
         ("load <surah:ayah>", "Load specific verse"),
         ("repeat <range>", "Repeat verses: <surah>, <start:end>, or <surah:start:end>"),
+        ("ns", "Next surah (with repeat range if in repeat mode)"),
+        ("ps", "Previous surah (with repeat range if in repeat mode)"),
         ("dir <path>", "Change audio directory and reload current verse"),
         ("status", "Get playback status"),
         ("cleanup", "Clean up orphaned runtime files"),
@@ -1086,6 +1132,12 @@ if __name__ == "__main__":
     
     # Next command
     next_parser = subparsers.add_parser('next', help='Play next verse')
+
+    # Next surah command
+    ns_parser = subparsers.add_parser('ns', help='Play next surah')
+    
+    # Previous surah command
+    ps_parser = subparsers.add_parser('ps', help='Play previous surah')
     
     # Load command
     load_parser = subparsers.add_parser('load', help='Load specific surah or verse')
