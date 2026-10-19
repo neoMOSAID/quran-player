@@ -53,6 +53,15 @@ COMMANDS
         start:end (for example, "10:15"). Note that issuing a play or load command
         cancels repeat mode.
 
+    goto <ayah>
+        Jump to a specific ayah within the current surah without breaking repeat mode.
+
+    ns / ps
+        Next / previous surah.
+
+    dir <path>
+        Change the audio directory and reload the current verse.
+
     status
         Display the current playback status, including the surah and ayah numbers and
         playback state.
@@ -67,11 +76,8 @@ COMMANDS
         Display detailed information about daemon status, configuration settings,
         file integrity, and system information.
 
-    help
-        Display a help message with a summary of available commands.
-
-    about
-        Display program information, including version, project links, and license details.
+    help / about
+        Display a help message with a summary of available commands and program info.
 
 CONFIGURATION
     The daemon uses an INI-style configuration file. On Linux/macOS, the file is typically
@@ -137,11 +143,20 @@ CONFIGURATION
         Default: 255,0,0,255.
 
 FILES
-    quran_player.py
+    daemon.py
         The main daemon script.
 
+    quran_gui.py
+        PyQt5-based GUI controller.
+
+    quran_search.py
+        Search tool (CLI and interactive RTL dialog).
+
+    install.py
+        Cross-platform installer. No root required.
+
     default_config.ini
-        Default configuration file shipped with the daemon.
+        Default configuration template shipped with the daemon.
 
     config.ini
         User configuration file. Typically located in ~/.config/quran-player/ (Linux/macOS)
@@ -157,6 +172,9 @@ FILES
         Log file for daemon events.
 
 USAGE EXAMPLES
+    Install:
+        python install.py
+
     Start the daemon:
         quran-daemon start
 
@@ -186,25 +204,18 @@ ENVIRONMENT VARIABLES
 
     PYTHON_IMAGE_WIDTH
         Overrides the default image width.
-
     PYTHON_IMAGE_WRAP_WIDTH
         Overrides the default wrap width.
-
     PYTHON_IMAGE_FONT_SIZE
         Overrides the default font size.
-
     PYTHON_IMAGE_FONT
         Overrides the default font family.
-
     PYTHON_IMAGE_BG_COLOR
         Overrides the default background color.
-
     PYTHON_IMAGE_TEXT_COLOR
         Overrides the default text color.
-
     PYTHON_IMAGE_HIGHLIGHT_COLOR
         Overrides the default highlight color.
-
     PYTHON_IMAGE_VERTICAL_PADDING
         Overrides the default vertical padding.
 

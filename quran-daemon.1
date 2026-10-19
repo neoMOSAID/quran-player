@@ -49,6 +49,15 @@ Repeat a range of verses. Provide the range in the format
 \fIstart:end\fR (for example, \fI10:15\fR). Note that issuing a play or load command
 cancels repeat mode.
 .TP
+.B goto
+Jump to a specific ayah in the current surah.
+.TP
+.B ns / ps
+Next / previous surah.
+.TP
+.B dir
+Change audio directory and reload the current verse.
+.TP
 .B status
 Display the current playback status, including the surah and ayah numbers and
 playback state.
@@ -63,11 +72,8 @@ Remove orphaned runtime files (e.g. stale PID or socket files).
 Display detailed information about daemon status, configuration settings,
 file integrity, and system information.
 .TP
-.B help
-Display a help message with a summary of available commands.
-.TP
-.B about
-Display program information, including version, project links, and license details.
+.B help / about
+Display a help message or program information.
 .SH CONFIGURATION
 The daemon uses an INI-style configuration file. On Linux/macOS, the file is typically
 located at:
@@ -131,8 +137,17 @@ Highlight color for indicating a specific line, as a comma-separated RGBA string
 (e.g., \fB255,0,0,255\fR). Default: \fB255,0,0,255\fR.
 .SH FILES
 .TP
-\fBquran_player.py\fR
+\fBdaemon.py\fR
 The main daemon script.
+.TP
+\fBquran_gui.py\fR
+PyQt5 GUI controller.
+.TP
+\fBquran_search.py\fR
+Search tool (CLI and interactive).
+.TP
+\fBinstall.py\fR
+Cross-platform installer.
 .TP
 \fBdefault_config.ini\fR
 Default configuration file shipped with the daemon.

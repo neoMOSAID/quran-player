@@ -1,512 +1,199 @@
 
 # Quran Player
 
-![Project Logo](https://raw.githubusercontent.com/neoMOSAID/quran-player/main/icon.png)
-
-
-A cross-platform Quran playback system with synchronized visual display
+A Linux-native Quran player daemon with **Conky** desktop verse display.
 
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B-green)](https://python.org)
-[![Website](https://img.shields.io/badge/Website-mosaid.xyz-blue)]( https://mosaid.xyz/quran-player)
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-green)](https://python.org)
 
-**Version:** v1.3.0  
-**License:** GPLv3  
-**Website:** [https://mosaid.xyz/quran-player](https://mosaid.xyz/quran-player)  
-**GitHub:** [https://github.com/neoMOSAID/quran-player](https://github.com/neoMOSAID/quran-player)
+**Version:** v1.4.0 · **License:** GPLv3
+**Website:** <https://mosaid.xyz/quran-player> · **GitHub:** <https://github.com/neoMOSAID/quran-player>
 
 ---
 
-## Overview
+## What it does
 
-Quran Player is a cross-platform application for Quranic verse playback with synchronized visual display and Arabic text rendering. It comprises several components:
+A background daemon plays Quran recitations verse-by-verse while **Conky** renders the current verse as a live overlay on your desktop. The daemon and Conky stay in sync — when the verse advances, the display updates within half a second.
 
-- **quran_player.py**  
-  The daemon that handles audio playback, state management, and command processing (play, pause, next, previous, load, repeat, etc.).
-
-- **quran_gui.py**  
-  A PyQt5-based graphical user interface with dark-mode styling, system tray support, and keyboard shortcuts for controlling playback.
-
-- **quran_search.py**  
-  A versatile Quran search tool supporting both command-line and interactive modes (with RTL input).
-
-- **arabic_topng.py**  
-  A utility that renders Arabic text to PNG images using customizable configuration parameters.
-
-- **Installation Scripts**  
-  - **Windows:** A Python setup script (`setup.py` or similar) that creates a virtual environment, copies application files, installs dependencies, creates CLI wrappers, and sets up a desktop shortcut.  
-  - **Linux:** A Bash script (`install.sh`) that installs system dependencies, creates a virtual environment, copies files, generates CLI wrappers in `/usr/local/bin`, creates a desktop entry, and installs the man page.
-
-- **Manual**  
-  A comprehensive manual is provided both as a man page (for Linux) and as `manual.txt` (for Windows users).
+| Component | Purpose |
+|---|---|
+| `daemon.py` | Audio playback + Conky lifecycle + command socket |
+| `quran_daemon_conky/` | Conky widget (installed to `~/.quran-player/conky/`) |
+| `quran_gui.py` | PyQt5 tray controller |
+| `quran_search.py` | Search tool (CLI + interactive RTL dialog) |
+| `install.py` | Installer (no root required) |
 
 ---
 
 ## Features
 
-- **Cross-Platform Support:**  
-  Designed for Windows, Linux, and (with minor adjustments) macOS.
-
-- **Audio Playback:**  
-  Verse-by-verse playback with auto-advance, repeat functionality, and persistent playback state.
-
-- **Graphical User Interface:**  
-  A modern, dark-themed UI with native system tray integration, keyboard shortcuts, and a responsive design.
-
-- **Interactive Search:**  
-  Command-line and interactive modes (with RTL support) for searching Quranic verses.
-
-- **Image Rendering:**  
-  Render Quranic verses to images with customizable fonts, sizes, colors, and wrapping options.
-
-- **Configurable:**  
-  Fully customizable via an INI file (with separate sections for daemon and image settings) and overridable via environment variables.
-
-- **Easy Installation:**  
-  Separate, tailored installation scripts for Windows and Linux.
+- Verse-by-verse playback with auto-advance and persistent state
+- Conky overlay updates in real time (0.5 s poll)
+- Repeat ranges, `goto`, next/previous surah
+- `conky_on` / `conky_off` — hide the verse display without stopping the daemon
+- Dark-themed GUI with tray integration and keyboard shortcuts
+- Arabic search with hamza/diacritic normalization
+- **Zero runtime dependencies beyond `python3`, `conky`, `pactl`**
 
 ---
 
-## Installation
+## Install
 
-### Windows
-
-1. **Requirements:**  
-   - Windows 7 or later  
-   - Python (pre-installed or installed via the setup script)  
-   - Administrator privileges (for some operations)
-
-2. **Setup Script:**  
-   Run the provided Windows setup script (e.g., `setup.py`):
-
-   ```bat
-   python setup.py
-   ```
-
-   This script will:
-   - Create a virtual environment under `%APPDATA%\quran-player`
-   - Copy application files and assets
-   - Install required dependencies (including `pywin32` and `winshell`)
-   - Create CLI wrappers in `%APPDATA%\quran-player\bin`
-   - Create a desktop shortcut for launching the GUI
-
-3. **Logs:**  
-   Check `install.log` (generated in the current directory) for details and troubleshooting.
-
----
-
-### Linux
-
-1. **Requirements:**  
-   - A modern Linux distribution (Ubuntu, Debian, Arch, etc.)
-   - Bash shell, Python3, and sudo privileges for certain installation steps
+Requires **Python 3.9+** and **conky**. **No sudo required.**
 
 ```bash
+# 1. Install conky (skip if already installed)
+sudo apt install conky-all     # Debian/Ubuntu
+# sudo pacman -S conky         # Arch
+# sudo dnf install conky       # Fedora
+
+# 2. Install quran-player
 git clone https://github.com/neoMOSAID/quran-player.git
 cd quran-player
+python install.py
 ```
 
-2. **Make Script Executable:**  
-   ```bash
-   chmod +x install.sh
-   ```
+The installer places everything under `~/.quran-player/` and CLI wrappers under `~/.local/bin/`. Add `~/.local/bin` to `PATH` if it isn't already.
 
-3. **Run the Installer:**  
-   ```bash
-   ./install.sh
-   ```
+### Installer flags
 
-   The script will:
-   - Install system dependencies (e.g., `python3-venv`, `feh`, `pulseaudio-utils`)
-   - Copy application files and assets to `~/.quran-player`
-   - Create a virtual environment and install Python dependencies
-   - Create CLI wrappers in `/usr/local/bin`
-   - Generate a desktop entry in `~/.local/share/applications`
-   - Install the man page for `quran-daemon`
-   
-4. **Uninstallation:**  
-   To uninstall, run:
-   ```bash
-   ./install.sh --uninstall
-   ```
+```bash
+python install.py                   # install / update
+python install.py --clean           # wipe install (keep config), reinstall
+python install.py --dry-run         # preview changes
+python install.py --no-conky        # skip Conky widget
+python install.py --uninstall       # remove install, keep config
+python install.py --uninstall --purge
+```
 
 ---
 
 ## Usage
 
-### Daemon Commands
+### Daemon
 
-The daemon is controlled via CLI commands. Use the generated wrappers:
+```bash
+quran-daemon start                     # daemon starts; conky launches automatically
+quran-daemon play | pause | toggle
+quran-daemon next | prev
+quran-daemon load 2:255                # surah:ayah
+quran-daemon load 36                   # whole surah
+quran-daemon repeat 10:15              # ayahs 10–15 of current surah
+quran-daemon repeat 2:1:20             # surah 2, ayahs 1–20
+quran-daemon repeat_off
+quran-daemon goto 42
+quran-daemon ns | ps                   # next/prev surah
+quran-daemon conky_off                 # hide desktop verse (daemon keeps playing)
+quran-daemon conky_on                  # show it again
+quran-daemon conky_toggle
+quran-daemon status                    # JSON (includes conky state)
+quran-daemon info                      # full diagnostic dump
+quran-daemon stop                      # daemon stops; conky terminates
+```
 
-- **Start the Daemon:**  
-  ```bash
-  quran-daemon start
-  ```
-- **Stop the Daemon:**  
-  ```bash
-  quran-daemon stop
-  ```
-- **Playback Control:**  
-  ```bash
-  quran-daemon play     # Resume playback
-  quran-daemon pause    # Pause playback
-  quran-daemon toggle   # Toggle between play and pause
-  quran-daemon next     # Advance to the next verse
-  quran-daemon prev     # Go back to the previous verse
-  ```
-- **Load a Specific Verse:**  
-  ```bash
-  quran-daemon load 2:255
-  ```
-- **Repeat a Range of Verses:**  
-  ```bash
-  quran-daemon repeat 10:15
-  ```
-- **Display Status:**  
-  ```bash
-  quran-daemon status
-  ```
-- **Generate Configuration File:**  
-  ```bash
-  quran-daemon config
-  ```
-- **Display Detailed Information:**  
-  ```bash
-  quran-daemon info
-  ```
-- **Help / About:**  
-  ```bash
-  quran-daemon help
-  quran-daemon about
-  ```
-
-### GUI Controller
-
-Launch the GUI using the desktop shortcut (Windows) or via the CLI wrapper:
+### GUI
 
 ```bash
 quran-gui
 ```
 
-The GUI features:
-- Dark theme with a custom Fusion palette
-- System tray integration and context menu
-- Keyboard shortcuts: Space (play/pause), Left (previous), Right (next), Esc (minimize)
+Keyboard: **Space** play/pause · **←** prev · **→** next · **Esc** hide. Has a **Conky** toggle button.
 
-### Search Tool
-
-Run the search tool with:
+### Search
 
 ```bash
-quran-search <surah> <start_ayah> [end_ayah]
+quran-search                           # interactive RTL dialog
+quran-search 2 255                     # print ayah
+quran-search 2 1 20                    # print range
 ```
 
-If no arguments are provided, the tool launches an interactive dialog that switches the keyboard layout to arabic, and switch it back on exit.
+---
 
-### Image Rendering
+## Audio files
 
-The script `arabic_topng.py` renders Arabic text to a PNG image with options for wrapping, padding, and color customization. This is used internally by the player for displaying verses.
+Place files named `SSSAAA.mp3` in `~/.config/quran-player/sample/` (or the directory set by `files_directory` in `config.ini`):
+
+- `SSS` = 3-digit surah (`002` for Al-Baqarah)
+- `AAA` = 3-digit ayah (`001` for the first ayah)
+
+Download from [everyayah.com](https://everyayah.com/recitations_ayat.html).
 
 ---
 
 ## Configuration
 
-The application is configured via an INI file. By default:
+`~/.config/quran-player/config.ini`:
 
-- **Linux/macOS:** `~/.config/quran-player/config.ini`
-- **Windows:** `%APPDATA%\quran-player\config.ini`
+```ini
+[daemon]
+max_log_size = 1000000
+log_level    = INFO
+files_directory =
 
-### [daemon] Section
+[conky]
+enable     = yes
+executable =
+```
 
-- **MAX_LOG_SIZE:**  
-  Maximum log file size in bytes (default: 1000000).
-
-- **LOG_LEVEL:**  
-  Log verbosity. Options: `CRITICAL`, `ERROR`, `WARNING`, `INFO`, `DEBUG`, `DISABLED` (default: `INFO`).
-
-- **FILES_DIRECTORY:**  
-  Directory where audio files are stored.
-
-### [image] Section
-
-- **ENABLE:**  
-  Enable image display (`yes`/`no`). (Default: `yes` on Linux, `no` on other platforms)
-
-- **DEFAULT_RESOLUTION:**  
-  Resolution for the generated image (e.g., `1240x170`).
-
-- **FONT_FILE:**  
-  Path to the Arabic font file (default: `arabic-font.ttf`).
-
-- **FONT_SIZE:**  
-  Font size for rendering (default: `48`).
-
-- **IMAGE_WIDTH:**  
-  Width of the image in pixels (default: `1240`).
-
-- **WRAP_WIDTH:**  
-  Maximum number of characters per line (default: `170`).
-
-- **VERTICAL_PADDING:**  
-  Padding in pixels (default: `20`).
-
-- **BG_COLOR:**  
-  Background color (RGBA, e.g., `0,0,0,0`).
-
-- **TEXT_COLOR:**  
-  Text color (RGBA, e.g., `255,255,255,255`).
-
-- **HIGHLIGHT_COLOR:**  
-  Highlight color (RGBA, e.g., `255,0,0,255`).
+Change `[conky] enable` to `no` to keep the daemon silent. Toggle at runtime with `conky_on` / `conky_off`.
 
 ---
 
+## Troubleshooting
 
-#### **Audio Files**
-The Quran Player requires Quranic audio files named in the format `XXXYYY.mp3`, where:
-- `XXX` is the 3-digit surah number (e.g., `002` for Surah Al-Baqarah)
-- `YYY` is the 3-digit ayah number (e.g., `001` for the first ayah)
+### Conky doesn't show the verse
 
-**Example**: `002001.mp3` for Surah 2, Ayah 1.
+1. `qd info` — check "Conky Display → Running: Yes". If "No", check the log.
+2. Verify `conky` is installed: `which conky`
+3. Check `$DISPLAY` / `$WAYLAND_DISPLAY` are set (needed for conky to launch)
+4. Check `/tmp/quran_verse.txt` exists and has content (updated when playback starts)
+5. Run conky manually to see errors:
+   ```bash
+   conky -c ~/.quran-player/conky/conky_quran
+   ```
 
-You can download these files from sources like [EveryAyah.com](https://everyayah.com/recitations_ayat.html). Place the files in the `~/.config/quran-player/sample/` directory (or the configured `FILES_DIRECTORY` in `config.ini`).
+### Arabic renders as disconnected letters
 
+Your conky doesn't have an Arabic-capable font. Make sure **Amiri** (or another Arabic font) is installed:
 
-## Manual
-
-Below is the full manual, which is also available as a man page (`quran-daemon.1`):
-
+```bash
+sudo apt install fonts-hosny-amiri
 ```
-===================================================================
-                       Quran Player Daemon Manual
-                            Version: v1.3.0
-                           Date: Feb 2025
-===================================================================
 
-NAME
-    quran-daemon - Quran Player Daemon
+Or edit `~/.quran-player/conky/conky_quran` and change `font = 'Amiri:size=38'` to another Arabic font.
 
-SYNOPSIS
-    quran-daemon [COMMAND] [ARGUMENTS]...
+### `quran-daemon` is shadowed by an old install
 
-DESCRIPTION
-    The Quran Player Daemon is a background service that provides Quranic verse
-    playback with synchronized visual display and Arabic text rendering. It supports
-    verse-by-verse playback with auto-advance, persistent playback state across
-    sessions, repeat functionality, and an optional system tray GUI controller.
-
-COMMANDS
-    start
-        Start the daemon. This initializes the service, binds the control socket, and
-        begins listening for client commands.
-
-    stop
-        Stop the daemon. This causes the daemon to shut down gracefully, releasing all
-        resources and cleaning up socket and PID files.
-
-    play
-        Resume audio playback.
-
-    pause
-        Pause the current playback.
-
-    toggle
-        Toggle between play and pause.
-
-    next
-        Advance to the next verse.
-
-    prev
-        Return to the previous verse.
-
-    load
-        Load a specific verse. The command expects an argument in the format
-        surah:ayah (for example, "2:255").
-
-    repeat
-        Repeat a range of verses. Provide the range in the format
-        start:end (for example, "10:15"). Note that issuing a play or load command
-        cancels repeat mode.
-
-    status
-        Display the current playback status, including the surah and ayah numbers and
-        playback state.
-
-    config
-        Generate the default configuration file in the user configuration directory.
-
-    cleanup
-        Remove orphaned runtime files (e.g., stale PID or socket files).
-
-    info
-        Display detailed information about daemon status, configuration settings,
-        file integrity, and system information.
-
-    help
-        Display a help message with a summary of available commands.
-
-    about
-        Display program information, including version, project links, and license details.
-
-CONFIGURATION
-    The daemon uses an INI-style configuration file. On Linux/macOS, the file is typically
-    located at:
-        ~/.config/quran-player/config.ini
-    On Windows, it is stored in the APPDATA folder.
-
-    The configuration file is divided into two main sections: [daemon] and [image].
-
-    -----------------------------------------------------------------
-    [daemon] Section
-    -----------------------------------------------------------------
-    MAX_LOG_SIZE
-        Maximum size (in bytes) of the log file before rotation occurs.
-        Default: 1000000.
-
-    LOG_LEVEL
-        Log verbosity level. Possible values are:
-        CRITICAL, ERROR, WARNING, INFO, DEBUG, or DISABLED.
-        Default: INFO.
-
-    FILES_DIRECTORY
-        The directory where the audio files are stored. If not specified, a default directory
-        (e.g., within the user configuration directory) is used.
-
-    -----------------------------------------------------------------
-    [image] Section
-    -----------------------------------------------------------------
-    ENABLE
-        Enable or disable image display. Accepts "yes" or "no". Default is "yes" on Linux
-        and "no" on other platforms.
-
-    DEFAULT_RESOLUTION
-        Default resolution for the generated image in the format WIDTHxHEIGHT (e.g., "1240x170").
-
-    FONT_FILE
-        Path to the Arabic font file used for rendering. By default, the "arabic-font.ttf"
-        in the script or user configuration directory is used.
-
-    FONT_SIZE
-        Font size for rendering the text. Default: 48.
-
-    IMAGE_WIDTH
-        Width of the generated image in pixels. Default: 1240.
-
-    WRAP_WIDTH
-        Maximum number of characters per line before wrapping. Default: 170.
-
-    VERTICAL_PADDING
-        Vertical padding (in pixels) added to the top and bottom of the image. Default: 20.
-
-    BG_COLOR
-        Background color as a comma-separated RGBA string (for example, "0,0,0,0").
-        Default: 0,0,0,0.
-
-    TEXT_COLOR
-        Text color as a comma-separated RGBA string (for example, "255,255,255,255").
-        Default: 255,255,255,255.
-
-    HIGHLIGHT_COLOR
-        Highlight color for indicating a specific line, as a comma-separated RGBA string
-        (for example, "255,0,0,255").
-        Default: 255,0,0,255.
-
-FILES
-    quran_player.py
-        The main daemon script.
-    default_config.ini
-        Default configuration file shipped with the daemon.
-    config.ini
-        User configuration file. Typically located in ~/.config/quran-player/ (Linux/macOS)
-        or in the APPDATA folder (Windows).
-    daemon.sock or \\.\pipe\quran-daemon (Windows)
-        The control socket used for inter-process communication.
-    daemon.pid
-        File storing the daemon's process ID.
-    daemon.log
-        Log file for daemon events.
-
-USAGE EXAMPLES
-    Start the daemon:
-        quran-daemon start
-
-    Stop the daemon:
-        quran-daemon stop
-
-    Toggle playback:
-        quran-daemon toggle
-
-    Load a specific verse:
-        quran-daemon load 2:255
-
-    Repeat a range of verses:
-        quran-daemon repeat 10:15
-
-    Display status:
-        quran-daemon status
-
-    Generate a new configuration file:
-        quran-daemon config
-
-    Display help:
-        quran-daemon help
-
-ENVIRONMENT VARIABLES
-    The following environment variables can override default configuration values:
-    PYTHON_IMAGE_WIDTH
-        Overrides the default image width.
-    PYTHON_IMAGE_WRAP_WIDTH
-        Overrides the default wrap width.
-    PYTHON_IMAGE_FONT_SIZE
-        Overrides the default font size.
-    PYTHON_IMAGE_FONT
-        Overrides the default font family.
-    PYTHON_IMAGE_BG_COLOR
-        Overrides the default background color.
-    PYTHON_IMAGE_TEXT_COLOR
-        Overrides the default text color.
-    PYTHON_IMAGE_HIGHLIGHT_COLOR
-        Overrides the default highlight color.
-    PYTHON_IMAGE_VERTICAL_PADDING
-        Overrides the default vertical padding.
-
-BUGS
-    Report bugs and issues via the project's GitHub issue tracker:
-        https://github.com/neoMOSAID/quran-player/issues
-
-AUTHOR
-    Developed by neoMOSAID.
-
-COPYRIGHT
-    This software is released under the GPLv3 License.
-
-===================================================================
-```
+If `type quran-daemon` shows something other than `~/.local/bin/quran-daemon`, remove the stale alias and ensure `~/.local/bin` is early in `PATH`.
 
 ---
 
-## Contributing
+## Project layout
 
-Contributions, bug reports, and feature requests are welcome! Please open an issue or submit a pull request on [GitHub](https://github.com/neoMOSAID/quran-player).
+```
+quran-player/
+├── daemon.py
+├── quran_gui.py
+├── quran_search.py
+├── audio_player.py
+├── config_manager.py
+├── install.py
+├── load.py
+├── default_config.ini
+├── requirements.txt
+├── quran-text/            # chapters.txt, uthmani.txt, simplified.txt
+├── audio/                 # bundled sample ayahs
+├── quran_daemon_conky/    # → installed as ~/.quran-player/conky/
+│   ├── conky_quran
+│   ├── reshape_arabic.py
+│   ├── reshape_arabic.sh
+│   └── config.ini
+└── move_dead_files.sh     # repo utility
+```
 
 ---
 
 ## License
 
-This project is licensed under the terms of the [GPLv3 License](https://www.gnu.org/licenses/gpl-3.0.en.html).
-
----
-
-## Support
-
-For help and support:
-- Website: [mosaid.xyz]( https://mosaid.xyz/quran-player)
-- Email: mail@mosaid.xyz
-- [Documentation Wiki](https://github.com/neoMOSAID/quran-player/wiki)
-- [Issues Tracker](https://github.com/neoMOSAID/quran-player/issues)
-
-
-
-
-
+[GPLv3](https://www.gnu.org/licenses/gpl-3.0.en.html).
 
