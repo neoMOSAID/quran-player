@@ -25,6 +25,7 @@ from collections import deque
 import quran_search
 from audio_player import AudioPlayer
 from config_manager import config
+from version import VERSION
 
 
 LOG_LEVELS = {
@@ -963,10 +964,12 @@ def cleanup_orphaned_files():
 
 
 def about():
+    # `VERSION` comes from VERSION file via version.py — no hardcoding.
+    ver_line = f"Version {VERSION}".center(54)
     about_info = f"""
     ┌──────────────────────────────────────────────────────┐
     │                  Quran Player Daemon                 │
-    │                  Version 1.4.0                       │
+    │{ver_line}│
     │              (Linux + Conky, native)                 │
     └──────────────────────────────────────────────────────┘
 
@@ -1009,7 +1012,6 @@ def about():
     cmd_list = "\n".join([f"  {cmd[0]:<38} {cmd[1]}" for cmd in commands])
     print(f"{about_info}\n{cmd_list}\n\n    © 2026 Quran Player Project - GPLv3 License")
     return True
-
 
 if __name__ == "__main__":
     import argparse

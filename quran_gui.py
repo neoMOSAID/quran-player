@@ -24,7 +24,7 @@ import json
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from config_manager import config
-
+from version import VERSION
 
 class DaemonCommunicator:
     """Talks to quran-daemon over the UNIX socket."""
@@ -367,8 +367,8 @@ class QuranPlayer(QtWidgets.QMainWindow):
     def about(self):
         dlg = QtWidgets.QMessageBox(self)
         dlg.setWindowTitle("About")
-        dlg.setText("""
-        <h3>Quran Player Daemon v1.4.0</h3>
+        dlg.setText(f"""
+        <h3>Quran Player Daemon v{VERSION}</h3>
         <p>Linux-native Quran audio playback with Conky desktop verse display.</p>
         <p>
         <a style="color: #1E90FF;" href="https://mosaid.xyz/quran-player">https://mosaid.xyz/quran-player</a><br><br>

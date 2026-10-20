@@ -6,7 +6,7 @@ A Linux-native Quran player daemon with **Conky** desktop verse display.
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-green)](https://python.org)
 
-**Version:** v1.4.0 · **License:** GPLv3
+**Version:** v2.0.0 · **License:** GPLv3
 **Website:** <https://mosaid.xyz/quran-player> · **GitHub:** <https://github.com/neoMOSAID/quran-player>
 
 ---

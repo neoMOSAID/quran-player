@@ -30,6 +30,7 @@ MIN_PYTHON = (3, 9)
 APP_FILES = [
     "daemon.py", "quran_gui.py", "quran_search.py",
     "config_manager.py", "audio_player.py", "load.py",
+    "version.py", "VERSION",
     "requirements.txt", "default_config.ini",
     "icon.png", "manual.txt", "quran-daemon.1",
 ]
@@ -282,10 +283,34 @@ def install_conky(paths: dict, dry_run=False):
 def create_wrappers(paths: dict, dry_run=False) -> int:
     bin_dir = paths["bin_dir"]
     created = 0
-    for name, script, _needs_console in CLI_ENTRIES:
+    for name, script, needs_console in CLI_ENTRIES:
         script_path = paths["install_dir"] / script
         wrapper = bin_dir / name
-        content = "#!/bin/bash\n" f'exec "{paths["python_exe"]}" "{script_path}" "$@"\n'
+
+        if needs_console:
+            content = (
+                "#!/bin/bash\n"
+                f'exec "{paths["python_exe"]}" "{script_path}" "$@"\n'
+            )
+        else:
+            # GUI: detach from terminal unless --foreground / -f is passed.
+            # setsid -f re-runs us in a new session so closing the terminal
+            # (SIGHUP to the process group) can't kill the GUI.
+            content = (
+                "#!/bin/bash\n"
+                f'PY="{paths["python_exe"]}"\n'
+                f'SCRIPT="{script_path}"\n'
+                'if [ "$1" = "--foreground" ] || [ "$1" = "-f" ]; then\n'
+                '    shift\n'
+                '    exec "$PY" "$SCRIPT" "$@"\n'
+                'fi\n'
+                'if [ -t 0 ] || [ -t 1 ]; then\n'
+                '    setsid -f "$PY" "$SCRIPT" "$@" </dev/null >/dev/null 2>&1\n'
+                '    exit 0\n'
+                'fi\n'
+                'exec "$PY" "$SCRIPT" "$@"\n'
+            )
+
         if dry_run:
             print(f"    would write {wrapper}")
             created += 1
@@ -295,7 +320,6 @@ def create_wrappers(paths: dict, dry_run=False) -> int:
         os.chmod(wrapper, 0o755)
         created += 1
     return created
-
 
 def remove_wrappers(paths: dict, dry_run=False):
     for name, _, _ in CLI_ENTRIES:
