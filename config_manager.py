@@ -11,6 +11,44 @@ class ConfigManager:
         self.config = self._load_config()
         self._ensure_directories()
         self._ensure_files()
+        # Self-heal: if _load_config dropped anything stale (e.g. the
+        # pre-2.0 [image] section), rewrite the file so the GUI and any
+        # external reader see the cleaned version without waiting for
+        # the next config.set() to overwrite it.
+        if getattr(self, '_dropped_stale', False):
+            self.save_config()
+
+    def _load_config(self):
+        config = configparser.ConfigParser()
+        defaults = self._get_default_config()
+        config.read_dict(defaults)
+
+        self._dropped_stale = False
+        if not os.path.exists(self.USER_CONFIG_FILE):
+            return config
+
+        user = configparser.ConfigParser()
+        try:
+            user.read(self.USER_CONFIG_FILE)
+        except configparser.Error:
+            # Corrupt file — fall back to defaults and rewrite.
+            self._dropped_stale = True
+            return config
+
+        # Only copy sections/keys that still exist in the app's schema.
+        # Unknown sections (e.g. the removed [image] block from pre-2.0)
+        # and unknown keys within known sections are silently dropped,
+        # so every save_config() produces a clean file.
+        for section in user.sections():
+            if not config.has_section(section):
+                self._dropped_stale = True
+                continue
+            for key, value in user.items(section):
+                if not config.has_option(section, key):
+                    self._dropped_stale = True
+                    continue
+                config.set(section, key, value)
+        return config
 
     def _init_paths(self):
         self.USER_CONFIG_DIR = os.path.expanduser("~/.config/quran-player")
@@ -54,13 +92,6 @@ class ConfigManager:
             if not os.path.exists(dest) and os.path.exists(src):
                 shutil.copy2(src, dest)
 
-    def _load_config(self):
-        config = configparser.ConfigParser()
-        config.read_dict(self._get_default_config())
-        if os.path.exists(self.USER_CONFIG_FILE):
-            config.read(self.USER_CONFIG_FILE)
-        return config
-
     def _get_default_config(self):
         parser = configparser.ConfigParser()
         if os.path.exists(self.DEFAULT_CONFIG_FILE):
@@ -91,6 +122,13 @@ class ConfigManager:
         except (configparser.NoSectionError, configparser.NoOptionError):
             return default
 
+    def reload(self):
+        """Re-read config.ini from disk, dropping any stale sections."""
+        self.config = self._load_config()
+        if getattr(self, '_dropped_stale', False):
+            self.save_config()
+        return True
+
     def getboolean(self, section, key, default=False):
         try:
             return self.config.getboolean(section, key)
@@ -104,8 +142,11 @@ class ConfigManager:
             return default
 
     def generate_default_config(self):
+        """Write a fresh default config.ini, discarding current settings."""
+        fresh = configparser.ConfigParser()
+        fresh.read_dict(self._get_default_config())
         with open(self.USER_CONFIG_FILE, "w") as configfile:
-            self.config.write(configfile)
+            fresh.write(configfile)
         return True
 
     def set(self, section, key, value):

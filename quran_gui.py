@@ -21,10 +21,12 @@ import subprocess
 import time
 import signal
 import json
+import configparser
 
 from PyQt5 import QtCore, QtGui, QtWidgets
 from config_manager import config
 from version import VERSION
+
 
 class DaemonCommunicator:
     """Talks to quran-daemon over the UNIX socket."""
@@ -321,35 +323,91 @@ class QuranPlayer(QtWidgets.QMainWindow):
         self.status_bar.showMessage(response)
 
     def config(self):
+        """Edit config.ini; validate, save, and push to the live daemon."""
+        # Ensure the file exists before opening the dialog.
         if not os.path.exists(config.USER_CONFIG_FILE):
             self.status_bar.showMessage("Generating default config...")
+            QtWidgets.QApplication.processEvents()
             self.daemon.send_command("config")
-            time.sleep(0.3)
+            deadline = time.time() + 2.0
+            while not os.path.exists(config.USER_CONFIG_FILE) and time.time() < deadline:
+                QtWidgets.QApplication.processEvents()
+                time.sleep(0.05)
         if not os.path.exists(config.USER_CONFIG_FILE):
             self.status_bar.showMessage("Could not create config file.")
             return
+
+        try:
+            with open(config.USER_CONFIG_FILE, "r", encoding="utf-8") as f:
+                original_text = f.read()
+        except OSError as e:
+            self.status_bar.showMessage(f"Cannot read config: {e}", 5000)
+            return
+
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Configuration")
         dialog.setModal(True)
-        dialog.resize(600, 400)
+        dialog.resize(800, 400)
         layout = QtWidgets.QVBoxLayout(dialog)
-        with open(config.USER_CONFIG_FILE, "r", encoding="utf-8") as f:
-            text_edit = QtWidgets.QTextEdit(dialog)
-            text_edit.setPlainText(f.read())
+
+        hint = QtWidgets.QLabel(
+            "Edit config.ini directly. Sections/keys not used by this version "
+            "are dropped on save.\nChanges are pushed to the running daemon on OK."
+        )
+        hint.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        text_edit = QtWidgets.QTextEdit(dialog)
+        text_edit.setPlainText(original_text)
+        text_edit.setFont(QtGui.QFont("Monospace", 10))
         layout.addWidget(text_edit)
+
         button_box = QtWidgets.QDialogButtonBox(
             QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
             parent=dialog,
         )
         layout.addWidget(button_box)
-        button_box.accepted.connect(dialog.accept)
+
+        def try_accept():
+            # Validate before accepting so a syntax error can't be saved.
+            try:
+                configparser.ConfigParser().read_string(text_edit.toPlainText())
+            except configparser.Error as e:
+                QtWidgets.QMessageBox.warning(
+                    dialog, "Invalid config",
+                    f"Config could not be parsed:\n\n{e}\n\nChanges were not saved.",
+                )
+                return
+            dialog.accept()
+
+        button_box.accepted.connect(try_accept)
         button_box.rejected.connect(dialog.reject)
-        if dialog.exec_() == QtWidgets.QDialog.Accepted:
-            with open(config.USER_CONFIG_FILE, "w", encoding="utf-8") as f:
-                f.write(text_edit.toPlainText())
-            self.status_bar.showMessage("Configuration updated.", 3000)
-        else:
+
+        if dialog.exec_() != QtWidgets.QDialog.Accepted:
             self.status_bar.showMessage("Configuration changes canceled.", 3000)
+            return
+
+        new_text = text_edit.toPlainText()
+        if new_text == original_text:
+            self.status_bar.showMessage("No changes to save.", 3000)
+            return
+
+        try:
+            with open(config.USER_CONFIG_FILE, "w", encoding="utf-8") as f:
+                f.write(new_text)
+        except OSError as e:
+            self.status_bar.showMessage(f"Failed to save config: {e}", 5000)
+            return
+
+        # Push the new file to the daemon so edits apply without restart.
+        response = self.daemon.send_command("reload_config")
+        if response.startswith("OK"):
+            self.status_bar.showMessage("Configuration saved and reloaded.", 3000)
+        else:
+            self.status_bar.showMessage(
+                f"Saved to file, but daemon reload failed: {response}", 5000
+            )
 
     def stop_daemon(self):
         msg = self.daemon.is_running()

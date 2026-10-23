@@ -5,7 +5,7 @@ import configparser
 import os
 import tempfile
 
-from quran_data import SURAH_AYAT, is_valid_verse
+from quran_data import is_valid_verse
 
 
 class StateMixin:
@@ -119,4 +119,3 @@ class StateMixin:
         return (surah, ayah - 1)
 
 
-        

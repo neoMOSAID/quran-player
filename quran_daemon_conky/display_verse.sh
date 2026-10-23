@@ -18,10 +18,14 @@ PY="${HOME}/.quran-player/env/bin/python"
 [ -x "$PY" ] || PY="$(command -v python3)"
 [ -n "$PY" ] || exit 0
 
+TMPDIR="${TMPDIR:-/tmp}"
+export VERSE_FILE="$TMPDIR/quran_verse_reshaped.txt"
+
 MAX_LINES="$MAX_LINES" "$PY" - <<'PYEOF'
 import os, sys
 
-path = '/tmp/quran_verse_reshaped.txt'
+path = os.environ['VERSE_FILE']
+
 try:
     with open(path, encoding='utf-8') as f:
         text = f.read()

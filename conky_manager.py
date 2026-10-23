@@ -19,6 +19,7 @@ class ConkyMixin:
         return shutil.which('conky')
 
     def _start_conky(self):
+        self._kill_orphan_conky()  
         if self.conky_process and self.conky_process.poll() is None:
             return True
         self.conky_process = None
@@ -37,8 +38,6 @@ class ConkyMixin:
         if not conky_exe:
             self.log_action("WARNING", "conky not installed (sudo apt install conky-all)")
             return False
-
-        self._kill_orphan_conky()
 
         try:
             self.conky_process = subprocess.Popen(
@@ -178,4 +177,3 @@ class ConkyMixin:
             return self.handle_conky_off()
         return self.handle_conky_on()
 
-        

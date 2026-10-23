@@ -14,10 +14,11 @@ import signal
 import pygame
 import portalocker
 
+from datetime import datetime
+
 import quran_search
 from audio_player import AudioPlayer
 from config_manager import config
-from version import VERSION
 
 from quran_data import SURAH_AYAT
 from daemon_utils import is_daemon_running, cleanup_orphaned_files
@@ -42,6 +43,7 @@ class Daemon(LoggingMixin, StateMixin, ConkyMixin, PlaybackMixin, StatusMixin):
             "repeat", "repeat_off", "dir", "ns", "ps", "goto",
             "prev", "next", "status", "config", "log",
             "conky_on", "conky_off", "conky_toggle",
+            "reload_config",
         ]
 
         self.audio_base = config.get('daemon', 'FILES_DIRECTORY', config.SAMPLE_DIR)
@@ -248,7 +250,7 @@ class Daemon(LoggingMixin, StateMixin, ConkyMixin, PlaybackMixin, StatusMixin):
                     )
             except IOError:
                 pass
-            
+
         print("OK")
 
         def shutdown_handler(signum, frame):

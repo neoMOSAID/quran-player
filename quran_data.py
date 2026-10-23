@@ -31,6 +31,3 @@ def is_valid_verse(surah, ayah):
     return True
 
 
-def max_ayah(surah):
-    return SURAH_AYAT[surah] if 1 <= surah <= 114 else 0
-    

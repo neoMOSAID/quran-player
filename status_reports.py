@@ -42,6 +42,17 @@ class StatusMixin:
         self.log_action("INFO", f"Default config generated at {config.USER_CONFIG_FILE}")
         return True
 
+    def handle_reload_config(self):
+        """Re-read config.ini from disk and refresh config-derived state."""
+        if not config.reload():
+            self.error_msg = "Failed to reload config"
+            return False
+        # Refresh the instance state that was seeded from config at startup.
+        self.audio_base = config.get('daemon', 'FILES_DIRECTORY', config.SAMPLE_DIR)
+        self.conky_enabled = config.getboolean('conky', 'enable', True)
+        self.log_action("INFO", "Configuration reloaded from disk")
+        return True
+
     def handle_log(self, args):
         try:
             numlines = int(args)

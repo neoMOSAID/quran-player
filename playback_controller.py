@@ -1,6 +1,7 @@
 
 """Playback mixin: play/pause/next/prev, load/goto/repeat, dir change."""
 
+import os
 import shutil
 import subprocess
 
@@ -8,7 +9,6 @@ import pygame
 
 import quran_search
 from config_manager import config
-from quran_data import SURAH_AYAT
 
 
 class PlaybackMixin:
@@ -276,4 +276,3 @@ class PlaybackMixin:
             self.log_action("WARNING", "Could not verify audio server — continuing")
             return True
 
-            

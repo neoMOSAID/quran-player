@@ -2,7 +2,7 @@
 conky.config = {
     use_xft = true,
     font = 'Amiri:size=38',
-    update_interval = 1,
+    update_interval = 0.5,
     own_window = true,
     own_window_type = "override",
     own_window_hints = 'undecorated,below,sticky,skip_taskbar,skip_pager',
