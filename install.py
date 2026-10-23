@@ -28,14 +28,27 @@ SOURCE_DIR = Path(__file__).resolve().parent
 MIN_PYTHON = (3, 9)
 
 APP_FILES = [
-    "daemon.py", "quran_gui.py", "quran_search.py",
+    # Daemon + its mixins (added in the 2.1.0 monolith split)
+    "daemon.py", "daemon_utils.py", "cli_parser.py",
+    "logging_utils.py", "state_manager.py", "conky_manager.py",
+    "playback_controller.py", "status_reports.py", "quran_data.py",
+    # Rest of the app
+    "quran_gui.py", "quran_search.py",
     "config_manager.py", "audio_player.py", "load.py",
     "version.py", "VERSION",
     "requirements.txt", "default_config.ini",
     "icon.png", "manual.txt", "quran-daemon.1",
 ]
 APP_DIRS = ["quran-text", "audio"]
-CONKY_FILES = ["conky_quran", "reshape_arabic.py", "reshape_arabic.sh", "config.ini"]
+CONKY_FILES = ["conky_quran", "reshape_arabic.py", "display_verse.sh", "config.ini"]
+
+# Amiri is bundled so a fresh install renders Arabic correctly even on
+# minimal systems without fonts-hosny-amiri. install_font() copies it to
+# ~/.local/share/fonts/ only if fontconfig doesn't already resolve "Amiri"
+# from *any* source (distro package, previous install, etc.).
+BUNDLED_FONT_FILE = "Amiri-Regular.ttf"
+FONT_FAMILY = "Amiri"
+FONT_INSTALL_MARKER = ".installed-fonts"
 
 CLI_ENTRIES = [
     ("quran-daemon", "daemon.py", True),
@@ -55,6 +68,7 @@ def get_platform_paths() -> dict:
         "python_exe": install_dir / "env" / "bin" / "python",
         "desktop_file": home / ".local" / "share" / "applications" / f"{APP_NAME}.desktop",
         "conky_dir": install_dir / "conky",
+        "fonts_dir": home / ".local" / "share" / "fonts",
     }
 
 
@@ -266,7 +280,23 @@ def install_conky(paths: dict, dry_run=False):
             continue
         copy_file_if_needed(src, dst_dir / fname, dry_run)
 
-    sh = dst_dir / "reshape_arabic.sh"
+    # Sweep orphans: conky/ is entirely installer-managed, so any file not
+    # in CONKY_FILES is obsolete (e.g. reshape_arabic.sh from pre-2.1).
+    if dst_dir.exists():
+        allowed = set(CONKY_FILES) | {"__pycache__"}
+        for entry in dst_dir.iterdir():
+            if entry.name in allowed or entry.is_dir():
+                continue
+            if dry_run:
+                print(f"    - {entry} (orphan)")
+            else:
+                print(f"    - {entry} (orphan, removed)")
+                try:
+                    entry.unlink()
+                except OSError as e:
+                    print(f"      failed: {e}")
+
+    sh = dst_dir / "display_verse.sh"
     if not dry_run and sh.exists():
         os.chmod(sh, 0o755)
 
@@ -275,6 +305,107 @@ def install_conky(paths: dict, dry_run=False):
         print("       (verse display will stay off until conky is installed)")
 
     print(f"    Conky widget: {dst_dir}")
+
+
+# ---------------------------------------------------------------------------
+# Amiri font (bundled fallback)
+# ---------------------------------------------------------------------------
+def _fc_match_amiri() -> bool:
+    """True if fontconfig already resolves 'Amiri' from *any* source.
+
+    Uses fc-match --format to get the resolved family name; if fc-match is
+    not installed (very rare — ships with fontconfig), assume Amiri is
+    present rather than shadow a user-installed font.
+    """
+    if shutil.which("fc-match") is None:
+        return True
+    try:
+        r = subprocess.run(
+            ["fc-match", FONT_FAMILY, "--format=%{family}\n"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if r.returncode != 0:
+            return True
+        resolved = r.stdout.strip().split(",")[0].strip()
+        return resolved.lower() == FONT_FAMILY.lower()
+    except Exception:
+        return True
+
+
+def install_font(paths: dict, dry_run=False):
+    """Copy bundled Amiri into ~/.local/share/fonts if not already present.
+
+    Records destinations in install_dir/.installed-fonts so uninstall can
+    remove exactly what we added (never touching user-installed fonts).
+    """
+    src = SOURCE_DIR / "quran_daemon_conky" / BUNDLED_FONT_FILE
+    if not src.exists():
+        print(f"    ⚠  Font bundle missing: {src.name} — conky may fall back")
+        return
+
+    if _fc_match_amiri():
+        print(f"    fontconfig already resolves '{FONT_FAMILY}' — skipping")
+        return
+
+    dest = paths["fonts_dir"] / BUNDLED_FONT_FILE
+    if dry_run:
+        print(f"    would install {dest}")
+        return
+
+    paths["fonts_dir"].mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+
+    # Refresh fontconfig cache so conky sees the font on next launch.
+    if shutil.which("fc-cache"):
+        subprocess.run(
+            ["fc-cache", "-f", str(paths["fonts_dir"])],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+
+    marker = paths["install_dir"] / FONT_INSTALL_MARKER
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    with open(marker, "a", encoding="utf-8") as f:
+        f.write(str(dest) + "\n")
+
+    print(f"    Installed {BUNDLED_FONT_FILE} → {dest}")
+
+
+def remove_installed_fonts(paths: dict, dry_run=False):
+    """Remove only fonts the installer added, based on .installed-fonts."""
+    marker = paths["install_dir"] / FONT_INSTALL_MARKER
+    if not marker.exists():
+        return
+    try:
+        lines = [l.strip() for l in marker.read_text().splitlines() if l.strip()]
+    except OSError:
+        return
+    for raw in lines:
+        path = Path(raw)
+        if dry_run:
+            print(f"    would remove font {path}")
+            continue
+        if path.exists():
+            try:
+                path.unlink()
+                print(f"    removed font {path}")
+                if shutil.which("fc-cache"):
+                    subprocess.run(
+                        ["fc-cache", "-f", str(path.parent)],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+            except OSError as e:
+                print(f"      failed to remove {path}: {e}")
+
+
+def _font_status(paths: dict) -> str:
+    """Human-readable Amiri status for the summary."""
+    marker = paths["install_dir"] / FONT_INSTALL_MARKER
+    font_path = paths["fonts_dir"] / BUNDLED_FONT_FILE
+    if marker.exists() and font_path.exists():
+        return f"bundled → {font_path}"
+    if _fc_match_amiri():
+        return "system (fc-match resolved)"
+    return "⚠ not installed — conky will use a fallback font"
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +451,7 @@ def create_wrappers(paths: dict, dry_run=False) -> int:
         os.chmod(wrapper, 0o755)
         created += 1
     return created
+
 
 def remove_wrappers(paths: dict, dry_run=False):
     for name, _, _ in CLI_ENTRIES:
@@ -428,8 +560,12 @@ def wipe_install(paths: dict, dry_run=False, keep_config=True):
     if dry_run:
         print("    would stop daemon")
         print(f"    would remove {paths['install_dir']}")
+        remove_installed_fonts(paths, dry_run=True)
     else:
         stop_daemon_if_running(paths)
+        # Fonts live outside install_dir, so remove them before rmtree
+        # destroys the marker file that tracks what we installed.
+        remove_installed_fonts(paths, dry_run=False)
         shutil.rmtree(paths["install_dir"], ignore_errors=True)
     remove_wrappers(paths, dry_run)
     remove_desktop_shortcut(paths, dry_run)
@@ -482,6 +618,7 @@ def install(paths: dict, clean=False, dry_run=False, verbose=False, with_conky=T
     print("[2/7] Installing Conky widget" if with_conky else "[2/7] Conky widget: skipped")
     if with_conky:
         install_conky(paths, dry_run)
+        install_font(paths, dry_run)
 
     print("[3/7] Ensuring virtual environment")
     created = ensure_venv(paths, dry_run)
@@ -530,6 +667,7 @@ def print_summary(paths: dict, with_conky: bool):
     print(f"  Wrappers    : {paths['bin_dir']}")
     if with_conky:
         print(f"  Conky dir   : {paths['conky_dir']}")
+        print(f"  Amiri font  : {_font_status(paths)}")
     print()
     print("  Try it:")
     print("    quran-daemon start &")
@@ -601,5 +739,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
     

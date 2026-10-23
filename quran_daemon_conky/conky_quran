@@ -21,11 +21,5 @@ conky.config = {
 }
 
 conky.text = [[
-${alignr}${execi 0.5 $HOME/.quran-player/conky/reshape_arabic.sh | head -n 1}
-${alignr}${execi 0.5 $HOME/.quran-player/conky/reshape_arabic.sh | sed -n '2p'}
-${alignr}${execi 0.5 $HOME/.quran-player/conky/reshape_arabic.sh | sed -n '3p'}
-${alignr}${execi 0.5 $HOME/.quran-player/conky/reshape_arabic.sh | sed -n '4p'}
-${alignr}${execi 0.5 $HOME/.quran-player/conky/reshape_arabic.sh | sed -n '5p'}
-${alignr}${execi 0.5 $HOME/.quran-player/conky/reshape_arabic.sh | sed -n '6p'}
+${execpi 0.5 $HOME/.quran-player/conky/display_verse.sh}
 ]]
-
