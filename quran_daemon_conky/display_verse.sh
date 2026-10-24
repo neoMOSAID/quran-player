@@ -13,7 +13,17 @@
 # causes the whole file to be treated as one line.
 
 set -u
-MAX_LINES=6
+
+# Read max_lines from conky_config.json (default 6 if missing/invalid)
+MAX_LINES=$(python3 -c '
+import json, os
+p = os.path.expanduser("~/.config/quran-player/conky_config.json")
+try:
+    print(int(json.load(open(p)).get("max_lines", 6)))
+except Exception:
+    print(6)
+')
+
 PY="${HOME}/.quran-player/env/bin/python"
 [ -x "$PY" ] || PY="$(command -v python3)"
 [ -n "$PY" ] || exit 0

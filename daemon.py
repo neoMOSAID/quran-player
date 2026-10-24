@@ -11,7 +11,6 @@ import threading
 import time
 import signal
 
-import pygame
 import portalocker
 
 from datetime import datetime
@@ -29,12 +28,27 @@ from playback_controller import PlaybackMixin
 from status_reports import StatusMixin, about
 
 
+def _recv_all(sock):
+    """Read from sock until the peer closes; return decoded bytes."""
+    chunks = []
+    while True:
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+    return b"".join(chunks).decode()
+
+
 class Daemon(LoggingMixin, StateMixin, ConkyMixin, PlaybackMixin, StatusMixin):
+
     surah_ayat = SURAH_AYAT
 
     def __init__(self):
+        # Per-thread error state so concurrent clients don't see each
+        # other's error messages.
+        self._tls = threading.local()
+
         self.running = False
-        self.error_msg = ""
         self.log_lock = threading.Lock()
         self.state_lock = threading.Lock()
 
@@ -44,6 +58,9 @@ class Daemon(LoggingMixin, StateMixin, ConkyMixin, PlaybackMixin, StatusMixin):
             "prev", "next", "status", "config", "log",
             "conky_on", "conky_off", "conky_toggle",
             "reload_config",
+            "conky_config", "conky_config_defaults",
+            "conky_config_set", "conky_config_reset",
+            "config_get", "config_defaults", "config_set",
         ]
 
         self.audio_base = config.get('daemon', 'FILES_DIRECTORY', config.SAMPLE_DIR)
@@ -58,24 +75,102 @@ class Daemon(LoggingMixin, StateMixin, ConkyMixin, PlaybackMixin, StatusMixin):
 
         self.load_playback_state()
 
+    # ------------------------------------------------------------------ error_msg
+    @property
+    def error_msg(self):
+        return getattr(self._tls, 'error_msg', '')
+
+    @error_msg.setter
+    def error_msg(self, value):
+        self._tls.error_msg = value
+
     # ------------------------------------------------------------------ client protocol
     def handle_client(self, conn):
         try:
             conn.settimeout(5.0)
-            data = conn.recv(1024).decode().strip()
-            if not data:
-                conn.sendall(b"ERROR: Empty command\n")
+            MAX_BYTES = 65536
+            PAYLOAD_COMMANDS = ("config_set", "conky_config_set")
+
+            # Phase 1: read until we have a complete first line (or EOF / oversize).
+            buf = b""
+            while b"\n" not in buf and len(buf) < MAX_BYTES:
+                try:
+                    chunk = conn.recv(4096)
+                except socket.timeout:
+                    break
+                if not chunk:
+                    break
+                buf += chunk
+
+            if not buf:
+                try:
+                    conn.sendall(b"ERROR: Empty command\n")
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
+            if len(buf) > MAX_BYTES:
+                try:
+                    conn.sendall(b"ERROR: Command too large\n")
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
                 return
 
-            parts = data.split(maxsplit=1)
-            command = parts[0]
-            args = parts[1] if len(parts) > 1 else ''
+            first_line, sep, remainder = buf.partition(b"\n")
+            parts = first_line.decode().strip().split(maxsplit=1)
+            command = parts[0] if parts else ""
+            args = parts[1] if len(parts) > 1 else ""
+
+            # Phase 2: payload commands read until EOF (client sends SHUT_WR).
+            if command in PAYLOAD_COMMANDS:
+                payload_chunks = [remainder] if remainder else []
+                total = len(buf)
+                while True:
+                    try:
+                        chunk = conn.recv(4096)
+                    except socket.timeout:
+                        break
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_BYTES:
+                        try:
+                            conn.sendall(b"ERROR: Command too large\n")
+                        except (BrokenPipeError, ConnectionResetError):
+                            pass
+                        return
+                    payload_chunks.append(chunk)
+                payload = b"".join(payload_chunks).decode()
+                args = (args + "\n" + payload) if args else payload
+
+            if not command:
+                try:
+                    conn.sendall(b"ERROR: Empty command\n")
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
 
             if command == "status":
                 try:
                     conn.sendall(self.handle_status().encode() + b"\n")
                 except BrokenPipeError:
                     self.log_action("WARNING", "Client disconnected before receiving status")
+                return
+
+            # Commands that return raw text payloads (JSON or rendered config),
+            # not OK/ERROR.
+            if command in ("conky_config", "conky_config_defaults",
+                           "config_get", "config_defaults"):
+                try:
+                    data = getattr(self, f"handle_{command}")()
+                    conn.sendall(data.encode() + b"\n")
+                except BrokenPipeError:
+                    self.log_action("WARNING",
+                                    f"Client disconnected before receiving {command}")
+                except Exception as e:
+                    try:
+                        conn.sendall(f"ERROR: {e}\n".encode())
+                    except BrokenPipeError:
+                        pass
                 return
 
             if command == "stop":
@@ -107,20 +202,34 @@ class Daemon(LoggingMixin, StateMixin, ConkyMixin, PlaybackMixin, StatusMixin):
             if command in ("about", "help"):
                 import io
                 from contextlib import redirect_stdout
-                buf = io.StringIO()
-                with redirect_stdout(buf):
+                buf_out = io.StringIO()
+                with redirect_stdout(buf_out):
                     about()
                 try:
-                    conn.sendall(buf.getvalue().encode() + b"\n")
+                    conn.sendall(buf_out.getvalue().encode() + b"\n")
                 except BrokenPipeError:
                     self.log_action("WARNING", "Client disconnected before receiving about")
                 return
+
+            # Clear any stale error from a previous command (or from the
+            # main-loop's handle_playback_end) before dispatching.
+            self.error_msg = ""
 
             if command == "load":
                 if not args:
                     conn.sendall(b"ERROR: Missing surah:ayah\n")
                     return
                 success = self.handle_load(args)
+            elif command == "conky_config_set":
+                if not args:
+                    conn.sendall(b"ERROR: Missing JSON payload\n")
+                    return
+                success = self.handle_conky_config_set(args)
+            elif command == "config_set":
+                if not args:
+                    conn.sendall(b"ERROR: Missing config text\n")
+                    return
+                success = self.handle_config_set(args)
             elif command == "goto":
                 if not args:
                     conn.sendall(b"ERROR: Missing ayah number\n")
@@ -145,8 +254,11 @@ class Daemon(LoggingMixin, StateMixin, ConkyMixin, PlaybackMixin, StatusMixin):
                 return
 
             try:
-                response = b"OK\n" if success else f"ERROR: Command failed: {self.error_msg}\n".encode()
-                conn.sendall(response)
+                if success:
+                    conn.sendall(b"OK\n")
+                else:
+                    msg = self.error_msg or "Command failed (no details)"
+                    conn.sendall(f"ERROR: {msg}\n".encode())
             except (BrokenPipeError, ConnectionResetError):
                 self.log_action("WARNING", "Client disconnected before receiving response")
 
@@ -328,13 +440,11 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    daemon = Daemon()
-
     if args.command == "start":
         if is_daemon_running():
             print("Error: Daemon already running")
             sys.exit(1)
-        daemon.handle_start()
+        Daemon().handle_start()
 
     elif args.command == "stop":
         try:
@@ -342,23 +452,23 @@ def main():
             client.settimeout(5)
             client.connect(config.SOCKET_FILE)
             client.sendall(b"stop\n")
-            print(client.recv(65536).decode().strip())
+            print(_recv_all(client).strip())
         except (ConnectionRefusedError, FileNotFoundError):
             print("Error: Daemon unavailable")
             sys.exit(1)
 
     elif args.command == "info":
         if not is_daemon_running():
-            print(daemon.handle_info())
+            print(Daemon().handle_info())
         else:
             try:
                 client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 client.settimeout(5)
                 client.connect(config.SOCKET_FILE)
                 client.sendall(b"info\n")
-                print(client.recv(65536).decode().strip())
+                print(_recv_all(client).strip())
             except (ConnectionRefusedError, FileNotFoundError):
-                print(daemon.handle_info())
+                print(Daemon().handle_info())
 
     elif args.command == "cleanup":
         cleanup_orphaned_files()
@@ -368,7 +478,7 @@ def main():
         about()
 
     elif args.command == "config":
-        daemon.handle_config()
+        Daemon().handle_config()
         print(f"Generated config at {config.USER_CONFIG_FILE}")
 
     else:
@@ -381,18 +491,35 @@ def main():
             client.connect(config.SOCKET_FILE)
 
             if args.command == "load":
-                cmd_str = f"load {args.verse}"
+                client.sendall(f"load {args.verse}\n".encode())
             elif args.command == "repeat":
-                cmd_str = f"repeat {args.range}"
+                client.sendall(f"repeat {args.range}\n".encode())
             elif args.command == "goto":
-                cmd_str = f"goto {args.ayah}"
+                client.sendall(f"goto {args.ayah}\n".encode())
             elif args.command == "dir":
-                cmd_str = f"dir {args.path}"
+                client.sendall(f"dir {args.path}\n".encode())
+            elif args.command == "conky_config_set":
+                payload = args.json_config
+                if payload == "-":
+                    payload = sys.stdin.read().strip()
+                    if not payload:
+                        print("Error: no JSON on stdin", file=sys.stderr)
+                        sys.exit(1)
+                client.sendall(f"conky_config_set\n{payload}".encode())
+                client.shutdown(socket.SHUT_WR)
+            elif args.command == "config_set":
+                payload = args.config_text
+                if payload == "-":
+                    payload = sys.stdin.read()
+                    if not payload.strip():
+                        print("Error: no config text on stdin", file=sys.stderr)
+                        sys.exit(1)
+                client.sendall(f"config_set\n{payload.rstrip()}".encode())
+                client.shutdown(socket.SHUT_WR)
             else:
-                cmd_str = args.command
+                client.sendall(f"{args.command}\n".encode())
 
-            client.sendall(cmd_str.encode() + b"\n")
-            print(client.recv(65536).decode().strip())
+            print(_recv_all(client).strip())
         except (ConnectionRefusedError, FileNotFoundError):
             print("Error: Daemon unavailable")
             sys.exit(1)

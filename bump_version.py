@@ -43,7 +43,7 @@ TARGETS = [
     ),
     (
         ROOT / "manual.txt",
-        re.compile(r"^(Version: v)\d+\.\d+\.\d+$", re.MULTILINE),
+        re.compile(r"^(\s*Version: v)\d+\.\d+\.\d+", re.MULTILINE),
         r"\g<1>" + VERSION,
     ),
     (

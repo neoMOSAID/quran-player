@@ -19,11 +19,19 @@ class ConkyMixin:
         return shutil.which('conky')
 
     def _start_conky(self):
-        self._kill_orphan_conky()  
         if self.conky_process and self.conky_process.poll() is None:
             return True
         self.conky_process = None
         if not self.conky_enabled:
+            return False
+
+        # Regenerate the runtime Lua from JSON before starting, so user edits
+        # to conky_config.json always take effect on the next daemon start.
+        try:
+            from conky_config_manager import conky_config
+            conky_config.render_lua()
+        except Exception as e:
+            self.log_action("ERROR", f"Failed to render conky config: {e}")
             return False
 
         if not os.path.exists(config.CONKY_CONFIG):
@@ -38,6 +46,8 @@ class ConkyMixin:
         if not conky_exe:
             self.log_action("WARNING", "conky not installed (sudo apt install conky-all)")
             return False
+
+        self._kill_orphan_conky()
 
         try:
             self.conky_process = subprocess.Popen(
@@ -117,12 +127,21 @@ class ConkyMixin:
     def _reshape_verse(self, text):
         if not text:
             return ""
+        if not hasattr(self, "_reshape_func"):
+            try:
+                from importlib.util import spec_from_file_location, module_from_spec
+                path = os.path.join(config.CONKY_DIR, "reshape_arabic.py")
+                spec = spec_from_file_location("_quran_reshape_arabic", path)
+                module = module_from_spec(spec)
+                spec.loader.exec_module(module)
+                self._reshape_func = module.reshape_and_wrap_arabic_text
+            except Exception as e:
+                self.log_action("WARNING", f"Failed to load reshape_arabic: {e}")
+                self._reshape_func = None
+        if self._reshape_func is None:
+            return ""
         try:
-            conky_dir = config.CONKY_DIR
-            if conky_dir not in sys.path:
-                sys.path.insert(0, conky_dir)
-            from reshape_arabic import reshape_and_wrap_arabic_text
-            return reshape_and_wrap_arabic_text(text, 100)
+            return self._reshape_func(text, 100)
         except Exception as e:
             self.log_action("WARNING", f"Arabic reshape failed: {e}")
             return ""

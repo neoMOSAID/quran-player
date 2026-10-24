@@ -35,7 +35,7 @@ APP_FILES = [
     # Rest of the app
     "quran_gui.py", "quran_search.py",
     "config_manager.py", "audio_player.py", "load.py",
-    "version.py", "VERSION",
+    "version.py", "VERSION", "conky_config_manager.py", 
     "requirements.txt", "default_config.ini",
     "icon.png", "manual.txt", "quran-daemon.1",
 ]
@@ -151,7 +151,8 @@ def copy_file_if_needed(src: Path, dest: Path, dry_run=False, verbose=False) -> 
     return True
 
 
-def copy_tree_incremental(src_dir: Path, dest_dir: Path, dry_run=False, verbose=False):
+def copy_tree_incremental(src_dir: Path, dest_dir: Path, dry_run=False, verbose=False,
+                          remove_orphans=True):
     if not src_dir.is_dir():
         return 0, 0, []
     copied = skipped = 0
@@ -166,7 +167,7 @@ def copy_tree_incremental(src_dir: Path, dest_dir: Path, dry_run=False, verbose=
         else:
             skipped += 1
     removed = []
-    if dest_dir.exists():
+    if remove_orphans and dest_dir.exists():
         for dest in dest_dir.rglob("*"):
             if not dest.is_file():
                 continue
@@ -525,7 +526,10 @@ def copy_app_files(paths: dict, dry_run=False, verbose=False):
         src_dir = SOURCE_DIR / dname
         if not src_dir.is_dir():
             continue
-        c, s, r = copy_tree_incremental(src_dir, dest_root / dname, dry_run, verbose)
+        c, s, r = copy_tree_incremental(
+            src_dir, dest_root / dname, dry_run, verbose,
+            remove_orphans=(dname == "quran-text"),
+        )
         total_copied += c
         total_skipped += s
         removed.extend(r)

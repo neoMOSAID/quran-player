@@ -1,7 +1,7 @@
 
 #!/usr/bin/env python3
 """
-Quran Player GUI - v1.1.0
+Quran Player GUI.
 
 Dark-mode PyQt5 controller for quran-daemon.
 
@@ -21,10 +21,8 @@ import subprocess
 import time
 import signal
 import json
-import configparser
 
 from PyQt5 import QtCore, QtGui, QtWidgets
-from config_manager import config
 from version import VERSION
 
 
@@ -39,11 +37,22 @@ class DaemonCommunicator:
     def send_command(self, command, *args):
         try:
             client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.settimeout(5)
             client.connect(self.socket_path)
-            client.sendall((" ".join([command] + list(args))).encode() + b"\n")
-            response = client.recv(65536).decode().strip()
+            if command in ("config_set", "conky_config_set"):
+                payload = args[0] if args else ""
+                client.sendall(f"{command}\n{payload}".encode())
+                client.shutdown(socket.SHUT_WR)
+            else:
+                client.sendall((" ".join([command] + list(args))).encode() + b"\n")
+            chunks = []
+            while True:
+                chunk = client.recv(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
             client.close()
-            return response
+            return b"".join(chunks).decode().strip()
         except (FileNotFoundError, ConnectionRefusedError):
             return "Daemon is not running."
         except Exception as e:
@@ -101,10 +110,11 @@ class DaemonCommunicator:
 
 
 class QuranPlayer(QtWidgets.QMainWindow):
+
     def __init__(self):
         super().__init__()
+        self.setWindowRole("main")  
         self.daemon = DaemonCommunicator()
-        self.repeat_range = None
         self.initUI()
         self.createTrayIcon()
         self.initShortcuts()
@@ -143,6 +153,8 @@ class QuranPlayer(QtWidgets.QMainWindow):
         self.about_button = QtWidgets.QPushButton("About")
         self.exit_button = QtWidgets.QPushButton("Exit")
         self.visit_website_button = QtWidgets.QPushButton("Website")
+        self.conky_config_button = QtWidgets.QPushButton("Conky Config")
+
 
         bottom_layout.addWidget(self.load_verse_button, 0, 0)
         bottom_layout.addWidget(self.repeat_verse_button, 0, 1)
@@ -153,6 +165,7 @@ class QuranPlayer(QtWidgets.QMainWindow):
         bottom_layout.addWidget(self.about_button, 1, 1)
         bottom_layout.addWidget(self.exit_button, 1, 2)
         bottom_layout.addWidget(self.visit_website_button, 1, 3)
+        bottom_layout.addWidget(self.conky_config_button, 2, 0)
         layout.addLayout(bottom_layout)
 
         self.status_bar = QtWidgets.QStatusBar()
@@ -171,6 +184,7 @@ class QuranPlayer(QtWidgets.QMainWindow):
         self.exit_button.clicked.connect(self.close)
         self.about_button.clicked.connect(self.about)
         self.visit_website_button.clicked.connect(self.visit_website)
+        self.conky_config_button.clicked.connect(self.conky_config)
 
         self.setStyleSheet("""
             QMainWindow { background-color: #2e2e2e; }
@@ -231,16 +245,10 @@ class QuranPlayer(QtWidgets.QMainWindow):
             ayah = status.get("ayah", "Unknown")
             playback_status = status.get("status", "Unknown")
             self.verse_label.setText(f"Surah {surah}, Ayah {ayah} ({playback_status})")
-            self.repeat_range = (
-                status.get("surah"),
-                status.get("repeat_start"),
-                status.get("repeat_end"),
-            ) if status.get("repeat") else None
             self.repeat_verse_button.setText("Cancel Repeat" if status.get("repeat") else "Repeat")
             self.conky_button.setText("Conky Off" if status.get("conky_enabled") else "Conky On")
         else:
             self.verse_label.setText("Status unavailable.")
-            self.repeat_range = None
 
     def update_status_bar(self):
         msg = self.daemon.is_running()
@@ -322,37 +330,25 @@ class QuranPlayer(QtWidgets.QMainWindow):
             response = self.daemon.send_command("conky_on")
         self.status_bar.showMessage(response)
 
-    def config(self):
-        """Edit config.ini; validate, save, and push to the live daemon."""
-        # Ensure the file exists before opening the dialog.
-        if not os.path.exists(config.USER_CONFIG_FILE):
-            self.status_bar.showMessage("Generating default config...")
-            QtWidgets.QApplication.processEvents()
-            self.daemon.send_command("config")
-            deadline = time.time() + 2.0
-            while not os.path.exists(config.USER_CONFIG_FILE) and time.time() < deadline:
-                QtWidgets.QApplication.processEvents()
-                time.sleep(0.05)
-        if not os.path.exists(config.USER_CONFIG_FILE):
-            self.status_bar.showMessage("Could not create config file.")
+    def conky_config(self):
+        """Edit conky display config as JSON. Daemon validates before saving."""
+        response = self.daemon.send_command("conky_config")
+        if not response or not response.lstrip().startswith("{"):
+            self.status_bar.showMessage(f"Could not load conky config: {response}", 5000)
             return
-
-        try:
-            with open(config.USER_CONFIG_FILE, "r", encoding="utf-8") as f:
-                original_text = f.read()
-        except OSError as e:
-            self.status_bar.showMessage(f"Cannot read config: {e}", 5000)
-            return
+        original_text = response
 
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Configuration")
+        dialog.setWindowRole("conky_config")
+        dialog.setWindowTitle("Conky Display Configuration")
         dialog.setModal(True)
-        dialog.resize(800, 400)
+        dialog.resize(700, 500)
         layout = QtWidgets.QVBoxLayout(dialog)
 
         hint = QtWidgets.QLabel(
-            "Edit config.ini directly. Sections/keys not used by this version "
-            "are dropped on save.\nChanges are pushed to the running daemon on OK."
+            "Edit the Conky display config as JSON. Missing keys fall back to "
+            "defaults; unknown keys are dropped.\nSave validates schema and "
+            "restarts conky if it's running."
         )
         hint.setStyleSheet("color: #aaaaaa; font-size: 11px;")
         hint.setWordWrap(True)
@@ -363,51 +359,112 @@ class QuranPlayer(QtWidgets.QMainWindow):
         text_edit.setFont(QtGui.QFont("Monospace", 10))
         layout.addWidget(text_edit)
 
-        button_box = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel,
-            parent=dialog,
-        )
+        button_box = QtWidgets.QDialogButtonBox(parent=dialog)
+        ok_btn = button_box.addButton(QtWidgets.QDialogButtonBox.Ok)
+        cancel_btn = button_box.addButton(QtWidgets.QDialogButtonBox.Cancel)
+        reset_btn = button_box.addButton("Restore Defaults",
+                                         QtWidgets.QDialogButtonBox.ResetRole)
         layout.addWidget(button_box)
 
-        def try_accept():
-            # Validate before accepting so a syntax error can't be saved.
+        def do_reset():
+            defaults = self.daemon.send_command("conky_config_defaults")
+            if defaults and defaults.lstrip().startswith("{"):
+                text_edit.setPlainText(defaults)
+            else:
+                self.status_bar.showMessage("Failed to load defaults.", 3000)
+
+        def do_save():
             try:
-                configparser.ConfigParser().read_string(text_edit.toPlainText())
-            except configparser.Error as e:
+                json.loads(text_edit.toPlainText())
+            except json.JSONDecodeError as e:
                 QtWidgets.QMessageBox.warning(
-                    dialog, "Invalid config",
-                    f"Config could not be parsed:\n\n{e}\n\nChanges were not saved.",
+                    dialog, "Invalid JSON",
+                    f"Config could not be parsed as JSON:\n\n{e}"
+                )
+                return
+            payload = text_edit.toPlainText().strip()
+            response = self.daemon.send_command("conky_config_set", payload)
+            if not response.startswith("OK"):
+                QtWidgets.QMessageBox.warning(
+                    dialog, "Validation failed",
+                    f"Daemon rejected the config:\n\n{response}"
                 )
                 return
             dialog.accept()
 
-        button_box.accepted.connect(try_accept)
-        button_box.rejected.connect(dialog.reject)
+        ok_btn.clicked.connect(do_save)
+        cancel_btn.clicked.connect(dialog.reject)
+        reset_btn.clicked.connect(do_reset)
 
-        if dialog.exec_() != QtWidgets.QDialog.Accepted:
-            self.status_bar.showMessage("Configuration changes canceled.", 3000)
-            return
-
-        new_text = text_edit.toPlainText()
-        if new_text == original_text:
-            self.status_bar.showMessage("No changes to save.", 3000)
-            return
-
-        try:
-            with open(config.USER_CONFIG_FILE, "w", encoding="utf-8") as f:
-                f.write(new_text)
-        except OSError as e:
-            self.status_bar.showMessage(f"Failed to save config: {e}", 5000)
-            return
-
-        # Push the new file to the daemon so edits apply without restart.
-        response = self.daemon.send_command("reload_config")
-        if response.startswith("OK"):
-            self.status_bar.showMessage("Configuration saved and reloaded.", 3000)
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            self.status_bar.showMessage("Conky config saved and applied.", 3000)
         else:
-            self.status_bar.showMessage(
-                f"Saved to file, but daemon reload failed: {response}", 5000
-            )
+            self.status_bar.showMessage("Conky config canceled.", 3000)
+
+
+    def config(self):
+        """Edit config.ini — daemon owns the authoritative copy."""
+        response = self.daemon.send_command("config_get")
+        if not response or not response.lstrip().startswith((";", "#", "[")):
+            self.status_bar.showMessage(f"Could not load config: {response}", 5000)
+            return
+        original_text = response
+
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowRole("config")
+        dialog.setWindowTitle("Configuration")
+        dialog.setModal(True)
+        dialog.resize(800, 500)
+        layout = QtWidgets.QVBoxLayout(dialog)
+
+        hint = QtWidgets.QLabel(
+            "Keys at their default value are commented out — delete the '#' to "
+            "enable.\nSave validates against the schema and pushes to the running "
+            "daemon."
+        )
+        hint.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        text_edit = QtWidgets.QTextEdit(dialog)
+        text_edit.setPlainText(original_text)
+        text_edit.setFont(QtGui.QFont("Monospace", 10))
+        layout.addWidget(text_edit)
+
+        button_box = QtWidgets.QDialogButtonBox(parent=dialog)
+        ok_btn = button_box.addButton(QtWidgets.QDialogButtonBox.Ok)
+        cancel_btn = button_box.addButton(QtWidgets.QDialogButtonBox.Cancel)
+        reset_btn = button_box.addButton("Restore Defaults",
+                                         QtWidgets.QDialogButtonBox.ResetRole)
+        layout.addWidget(button_box)
+
+        def do_reset():
+            defaults = self.daemon.send_command("config_defaults")
+            if defaults and defaults.lstrip().startswith((";", "#", "[")):
+                text_edit.setPlainText(defaults)
+            else:
+                self.status_bar.showMessage("Failed to load defaults.", 3000)
+
+        def do_save():
+            payload = text_edit.toPlainText().rstrip()
+            response = self.daemon.send_command("config_set", payload)
+            if not response.startswith("OK"):
+                QtWidgets.QMessageBox.warning(
+                    dialog, "Validation failed",
+                    f"Daemon rejected the config:\n\n{response}"
+                )
+                return
+            dialog.accept()
+
+        ok_btn.clicked.connect(do_save)
+        cancel_btn.clicked.connect(dialog.reject)
+        reset_btn.clicked.connect(do_reset)
+
+        if dialog.exec_() == QtWidgets.QDialog.Accepted:
+            self.status_bar.showMessage("Configuration saved and applied.", 3000)
+        else:
+            self.status_bar.showMessage("Configuration changes canceled.", 3000)
+
 
     def stop_daemon(self):
         msg = self.daemon.is_running()
@@ -422,6 +479,7 @@ class QuranPlayer(QtWidgets.QMainWindow):
             QtWidgets.QApplication.processEvents()
             self.status_bar.showMessage(self.daemon.send_command("stop"))
 
+
     def about(self):
         dlg = QtWidgets.QMessageBox(self)
         dlg.setWindowTitle("About")
@@ -429,7 +487,7 @@ class QuranPlayer(QtWidgets.QMainWindow):
         <h3>Quran Player Daemon v{VERSION}</h3>
         <p>Linux-native Quran audio playback with Conky desktop verse display.</p>
         <p>
-        <a style="color: #1E90FF;" href="https://mosaid.xyz/quran-player">https://mosaid.xyz/quran-player</a><br><br>
+        <a style="color: #1E90FF;" href="https://mosaid.xyz/programs/quran-player/">https://mosaid.xyz/programs/quran-player/</a><br><br>
         <a style="color: #1E90FF;" href="https://github.com/neoMOSAID/quran-player">https://github.com/neoMOSAID/quran-player</a>
         </p>
         <p>&copy; 2026 Quran Player Project - GPLv3 License</p>
@@ -440,7 +498,7 @@ class QuranPlayer(QtWidgets.QMainWindow):
         dlg.exec_()
 
     def visit_website(self):
-        if not QtGui.QDesktopServices.openUrl(QtCore.QUrl("https://mosaid.xyz/quran-player")):
+        if not QtGui.QDesktopServices.openUrl(QtCore.QUrl("https://mosaid.xyz/programs/quran-player/")):
             self.status_bar.showMessage("Failed to open website.", 3000)
 
 

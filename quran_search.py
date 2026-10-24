@@ -39,6 +39,9 @@ def read_chapters(filename):
 
 
 def read_uthmani(filename):
+    if not os.path.exists(filename):
+        print(f"Warning: Missing file {filename}", file=sys.stderr)
+        return {}
     result = {}
     with open(filename, 'r', encoding='utf-8') as f:
         for line in f:
@@ -49,8 +52,10 @@ def read_uthmani(filename):
             result[(surah, ayah)] = ('|'.join(parts[2:]), line.strip())
     return result
 
-
 def read_simplified(filename):
+    if not os.path.exists(filename):
+        print(f"Warning: Missing file {filename}", file=sys.stderr)
+        return {}
     result = {}
     with open(filename, 'r', encoding='utf-8') as f:
         for line in f:

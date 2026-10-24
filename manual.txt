@@ -1,7 +1,8 @@
+
 ===================================================================
                        Quran Player Daemon Manual
-                            Version: v1.3.0
-                           Date: Feb 2025
+                            Version: v2.0.3
+                           Date: Oct 2026
 ===================================================================
 
 NAME
@@ -11,159 +12,163 @@ SYNOPSIS
     quran-daemon [COMMAND] [ARGUMENTS]...
 
 DESCRIPTION
-    The Quran Player Daemon is a background service that provides Quranic verse
-    playback with synchronized visual display and Arabic text rendering. It supports
-    verse-by-verse audio playback with auto-advance, persistent playback state across
-    sessions, repeat functionality, and an optional system tray GUI controller.
+    The Quran Player Daemon is a Linux-native background service that provides
+    Quranic verse audio playback with synchronized desktop verse display via
+    Conky. It supports verse-by-verse playback with auto-advance, persistent
+    playback state across sessions, repeat ranges, an optional Conky desktop
+    overlay, and a PyQt5 tray GUI controller.
 
-    The daemon communicates with a GUI controller via a control socket (using UNIX domain
-    sockets on Linux/macOS or TCP/Named Pipes on Windows) and is configured via an
-    INI-style configuration file.
+    The daemon communicates with clients over a UNIX domain socket and is
+    configured via an INI-style configuration file.
 
 COMMANDS
     start
-        Start the daemon. This initializes the service, binds the control socket, and
-        begins listening for client commands.
+        Start the daemon. Initializes the audio subsystem, launches Conky
+        (if enabled), binds the control socket, and begins listening.
 
     stop
-        Stop the daemon. This causes the daemon to shut down gracefully, releasing all
-        resources and cleaning up socket and PID files.
+        Stop the daemon gracefully. Releases the audio device, terminates
+        Conky, and removes socket and PID files.
 
     play
-        Resume audio playback.
+        Resume audio playback from the last saved verse.
 
     pause
-        Pause the current playback.
+        Pause the current playback, keeping the position.
 
     toggle
         Toggle between play and pause.
 
-    next
-        Advance to the next verse.
-
-    prev
-        Return to the previous verse.
-
-    load
-        Load a specific verse. The command expects an argument in the format
-        surah:ayah (for example, "2:255").
-
-    repeat
-        Repeat a range of verses. Provide the range in the format
-        start:end (for example, "10:15"). Note that issuing a play or load command
-        cancels repeat mode.
+    next / prev
+        Advance to / return to the next / previous verse. Wraps across
+        surah boundaries.
 
     goto <ayah>
-        Jump to a specific ayah within the current surah without breaking repeat mode.
+        Jump to a specific ayah within the current surah. Honours any active
+        repeat range.
+
+    load <surah>[:ayah]
+        Load a surah (from its beginning) or a specific verse. Loading a
+        verse clears any active repeat range.
+
+    repeat <form>
+        Set a repeat range. Forms:
+          <surah>               Repeat an entire surah
+          <start>:<end>         Repeat a range within the current surah
+          <surah>:<start>:<end> Repeat a range in the named surah
+          off                   Turn repeat mode off
+
+    repeat_off
+        Same as 'repeat off'.
 
     ns / ps
-        Next / previous surah.
+        Load the next / previous surah from its beginning. Clears any active
+        repeat range.
 
     dir <path>
         Change the audio directory and reload the current verse.
 
+    conky_on / conky_off / conky_toggle
+        Start / stop / toggle the Conky desktop verse display without
+        stopping playback.
+
+    conky_config / conky_config_defaults / conky_config_reset / conky_config_set
+        Inspect / show defaults / reset / validate-and-save the Conky display
+        config (JSON).
+
+    config_get / config_defaults / config_set
+        Inspect / reset / validate-and-save config.ini.
+
+    reload_config
+        Re-read config.ini from disk and refresh daemon state.
+
     status
-        Display the current playback status, including the surah and ayah numbers and
-        playback state.
-
-    config
-        Generate the default configuration file in the user configuration directory.
-
-    cleanup
-        Remove orphaned runtime files (e.g., stale PID or socket files).
+        Print a JSON snapshot of the daemon state.
 
     info
-        Display detailed information about daemon status, configuration settings,
-        file integrity, and system information.
+        Print a detailed diagnostic report.
 
-    help / about
-        Display a help message with a summary of available commands and program info.
+    cleanup
+        Remove stale runtime files (PID, socket) when no daemon is running.
+
+    config
+        Regenerate config.ini to defaults.
+
+    about / help
+        Show project info and the full command reference.
 
 CONFIGURATION
-    The daemon uses an INI-style configuration file. On Linux/macOS, the file is typically
-    located at:
-        ~/.config/quran-player/config.ini
-    On Windows, it is stored in the APPDATA folder.
+    The daemon uses an INI-style configuration file at:
 
-    The configuration file is divided into two main sections: [daemon] and [image].
+        ~/.config/quran-player/config.ini
+
+    The configuration file has two sections: [daemon] and [conky].
 
     -----------------------------------------------------------------
     [daemon] Section
     -----------------------------------------------------------------
-    MAX_LOG_SIZE
-        Maximum size (in bytes) of the log file before rotation occurs.
+    max_log_size
+        Maximum size (in bytes) of the log file before rotation.
         Default: 1000000.
 
-    LOG_LEVEL
-        Log verbosity level. Possible values are:
+    log_level
+        Log verbosity level. Possible values:
         CRITICAL, ERROR, WARNING, INFO, DEBUG, or DISABLED.
         Default: INFO.
 
-    FILES_DIRECTORY
-        The directory where the audio files are stored. If not specified, a default
-        directory (e.g., within the user configuration directory) is used.
+    files_directory
+        Directory containing audio files (SSSAAA.mp3). Empty means
+        use the bundled sample directory:
+        ~/.config/quran-player/sample/
 
     -----------------------------------------------------------------
-    [image] Section
+    [conky] Section
     -----------------------------------------------------------------
-    ENABLE
-        Enable or disable image display. Accepts "yes" or "no". Default is "yes" on Linux
-        and "no" on other platforms.
+    enable
+        Show the current verse on the desktop via Conky. yes/no.
+        Default: yes.
 
-    DEFAULT_RESOLUTION
-        Default resolution for the generated image in the format WIDTHxHEIGHT (e.g., "1240x170").
+    executable
+        Path to the conky executable. Empty means auto-detect from PATH.
 
-    FONT_FILE
-        Path to the Arabic font file used for rendering. By default, the "arabic-font.ttf"
-        in the script or user configuration directory is used.
+    -----------------------------------------------------------------
+    Conky Display Config (JSON)
+    -----------------------------------------------------------------
+    The fine-grained Conky display config lives at:
 
-    FONT_SIZE
-        Font size for rendering the text. Default: 48.
+        ~/.config/quran-player/conky_config.json
 
-    IMAGE_WIDTH
-        Width of the generated image in pixels. Default: 1240.
-
-    WRAP_WIDTH
-        Maximum number of characters per line before wrapping. Default: 170.
-
-    VERTICAL_PADDING
-        Vertical padding (in pixels) added to the top and bottom of the image. Default: 20.
-
-    BG_COLOR
-        Background color as a comma-separated RGBA string (for example, "0,0,0,0").
-        Default: 0,0,0,0.
-
-    TEXT_COLOR
-        Text color as a comma-separated RGBA string (for example, "255,255,255,255").
-        Default: 255,255,255,255.
-
-    HIGHLIGHT_COLOR
-        Highlight color for indicating a specific line, as a comma-separated RGBA string
-        (for example, "255,0,0,255").
-        Default: 255,0,0,255.
+    Edit it via 'conky_config_get' / 'conky_config_set', or through the
+    GUI's "Conky Config" dialog. Invalid JSON or schema violations are
+    rejected before anything is written.
 
 FILES
     daemon.py
-        The main daemon script.
+        The main daemon entry point.
 
     quran_gui.py
-        PyQt5-based GUI controller.
+        PyQt5 tray controller.
 
     quran_search.py
         Search tool (CLI and interactive RTL dialog).
 
     install.py
-        Cross-platform installer. No root required.
+        Linux-native installer. No root required.
 
     default_config.ini
-        Default configuration template shipped with the daemon.
+        Default configuration template.
 
     config.ini
-        User configuration file. Typically located in ~/.config/quran-player/ (Linux/macOS)
-        or in the APPDATA folder (Windows).
+        User configuration file (~/.config/quran-player/config.ini).
 
-    daemon.sock or \\.\pipe\quran-daemon (Windows)
-        The control socket used for inter-process communication.
+    conky_config.json
+        User-editable Conky display config.
+
+    quran-daemon (installed)
+        CLI wrapper, typically at ~/.local/bin/quran-daemon.
+
+    daemon.sock
+        Control socket used for inter-process communication.
 
     daemon.pid
         File storing the daemon's process ID.
@@ -199,26 +204,6 @@ USAGE EXAMPLES
     Display help:
         quran-daemon help
 
-ENVIRONMENT VARIABLES
-    The following environment variables can override default configuration values:
-
-    PYTHON_IMAGE_WIDTH
-        Overrides the default image width.
-    PYTHON_IMAGE_WRAP_WIDTH
-        Overrides the default wrap width.
-    PYTHON_IMAGE_FONT_SIZE
-        Overrides the default font size.
-    PYTHON_IMAGE_FONT
-        Overrides the default font family.
-    PYTHON_IMAGE_BG_COLOR
-        Overrides the default background color.
-    PYTHON_IMAGE_TEXT_COLOR
-        Overrides the default text color.
-    PYTHON_IMAGE_HIGHLIGHT_COLOR
-        Overrides the default highlight color.
-    PYTHON_IMAGE_VERTICAL_PADDING
-        Overrides the default vertical padding.
-
 BUGS
     Report bugs and issues via the project's GitHub issue tracker:
         https://github.com/neoMOSAID/quran-player/issues
@@ -230,3 +215,4 @@ COPYRIGHT
     This software is released under the GPLv3 License.
 
 ===================================================================
+

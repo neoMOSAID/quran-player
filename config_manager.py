@@ -118,10 +118,14 @@ class ConfigManager:
 
     def get(self, section, key, default=None):
         try:
-            return self.config.get(section, key)
+            val = self.config.get(section, key)
         except (configparser.NoSectionError, configparser.NoOptionError):
             return default
-
+        # An empty value in the file means "use the documented default".
+        if val == "" and default is not None:
+            return default
+        return val
+        
     def reload(self):
         """Re-read config.ini from disk, dropping any stale sections."""
         self.config = self._load_config()
@@ -142,11 +146,12 @@ class ConfigManager:
             return default
 
     def generate_default_config(self):
-        """Write a fresh default config.ini, discarding current settings."""
+        """Reset config.ini to defaults (preserves schema comments + header)."""
         fresh = configparser.ConfigParser()
         fresh.read_dict(self._get_default_config())
-        with open(self.USER_CONFIG_FILE, "w") as configfile:
-            fresh.write(configfile)
+        self.config = fresh
+        with open(self.USER_CONFIG_FILE, "w", encoding="utf-8") as f:
+            f.write(self.render_template())
         return True
 
     def set(self, section, key, value):
@@ -156,9 +161,144 @@ class ConfigManager:
         self.save_config()
 
     def save_config(self):
-        with open(self.USER_CONFIG_FILE, "w") as configfile:
-            self.config.write(configfile)
+        with open(self.USER_CONFIG_FILE, "w", encoding="utf-8") as f:
+            f.write(self.render_template())
 
+    def render_template(self):
+        """Render default_config.ini with current values substituted.
+
+        Keys whose current effective value differs from the default are shown
+        uncommented, with the active value. Keys at their default are commented
+        out, so the user sees the full schema without clutter.
+        """
+        if not os.path.exists(self.DEFAULT_CONFIG_FILE):
+            from io import StringIO
+            buf = StringIO()
+            self.config.write(buf)
+            return buf.getvalue()
+
+        default_effective = self._get_default_config()
+        with open(self.DEFAULT_CONFIG_FILE, 'r', encoding='utf-8') as f:
+            template = f.read()
+
+        out = []
+        section = None
+        for line in template.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith(';') or stripped.startswith('#'):
+                out.append(line)
+                continue
+            if stripped.startswith('[') and stripped.endswith(']'):
+                section = stripped[1:-1].strip()
+                out.append(line)
+                continue
+            if '=' in line and section is not None:
+                key, _, tmpl_default = line.partition('=')
+                key = key.strip()
+                indent = line[:len(line) - len(line.lstrip())]
+                schema_default = default_effective.get(section, {}).get(
+                    key.lower(), tmpl_default.strip()
+                )
+                current = self.config.get(section, key, fallback=schema_default)
+                if str(current) == str(schema_default):
+                    out.append(f"{indent}# {key} = {tmpl_default.strip()}")
+                else:
+                    out.append(f"{indent}{key} = {current}")
+                continue
+            out.append(line)
+
+        header = (
+            "; delete the \"#\" at the start of the line to enable\n"
+            "; the config value\n"
+            "\n"
+        )
+        return header + '\n'.join(out) + '\n'
+
+    def render_defaults(self):
+        """Render default_config.ini with every key spelled out at its
+        effective default value. Used by the GUI 'Restore Defaults' button.
+
+        Unlike render_template() (which comments out keys at their default),
+        this shows all keys with active values so the user sees a complete
+        config to edit.
+        """
+        defaults = self._get_default_config()
+        out = []
+        if os.path.exists(self.DEFAULT_CONFIG_FILE):
+            with open(self.DEFAULT_CONFIG_FILE, "r", encoding="utf-8") as f:
+                template_lines = f.read().splitlines()
+            section = None
+            for line in template_lines:
+                stripped = line.strip()
+                if not stripped or stripped.startswith(";") or stripped.startswith("#"):
+                    out.append(line)
+                    continue
+                if stripped.startswith("[") and stripped.endswith("]"):
+                    section = stripped[1:-1].strip()
+                    out.append(line)
+                    continue
+                if "=" in line and section is not None:
+                    key = line.split("=", 1)[0].strip()
+                    indent = line[:len(line) - len(line.lstrip())]
+                    value = defaults.get(section, {}).get(key.lower(), "")
+                    out.append(f"{indent}{key} = {value}")
+                    continue
+                out.append(line)
+        else:
+            for section, keys in defaults.items():
+                out.append(f"[{section}]")
+                for k, v in keys.items():
+                    out.append(f"{k} = {v}")
+                out.append("")
+        return "\n".join(out) + "\n"
+
+    def validate_ini(self, text):
+        """Validate INI text. Returns (ok, error_message).
+
+        Checks: parseable INI, only known sections/keys, semantic values
+        for log_level / max_log_size / conky.enable.
+        """
+        try:
+            user = configparser.ConfigParser()
+            user.read_string(text)
+        except configparser.Error as e:
+            return False, f"Syntax error: {e}"
+
+        defaults = self._get_default_config()
+        errors = []
+        for section in user.sections():
+            if section not in defaults:
+                errors.append(f"Unknown section: [{section}]")
+                continue
+            for key in user.options(section):
+                if key not in defaults[section]:
+                    errors.append(f"Unknown key: [{section}] {key}")
+
+        if user.has_option("daemon", "log_level"):
+            lvl = user.get("daemon", "log_level").upper()
+            valid = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "DISABLED"}
+            if lvl not in valid:
+                errors.append(
+                    f"[daemon] log_level must be one of {sorted(valid)}, got '{lvl}'"
+                )
+
+        if user.has_option("daemon", "max_log_size"):
+            try:
+                sz = user.getint("daemon", "max_log_size")
+                if sz < 1024:
+                    errors.append(f"[daemon] max_log_size must be >= 1024, got {sz}")
+            except ValueError:
+                errors.append("[daemon] max_log_size must be an integer")
+
+        if user.has_option("conky", "enable"):
+            try:
+                user.getboolean("conky", "enable")
+            except ValueError:
+                errors.append("[conky] enable must be yes/no/true/false/1/0")
+
+        if errors:
+            return False, "\n".join(errors)
+        return True, ""
 
 config = ConfigManager()
 

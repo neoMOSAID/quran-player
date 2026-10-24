@@ -64,7 +64,7 @@ class AudioPlayer:
             try:
                 pygame.mixer.init(
                     frequency=44100, size=-16, channels=2,
-                    buffer=1024, allowedchanges=0,
+                    buffer=1024,
                 )
                 self.log_callback("INFO", "Audio initialized successfully")
                 return True
@@ -79,6 +79,16 @@ class AudioPlayer:
         if not _MIXER_AVAILABLE:
             return False
         return pygame.mixer.get_init() is not None
+
+    def is_busy(self):
+        """True while audio is playing, False if stopped, None on mixer error."""
+        if not self.is_initialized():
+            return False
+        try:
+            return pygame.mixer.music.get_busy()
+        except (pygame.error, NotImplementedError) as e:
+            self.log_callback("WARNING", f"Audio busy check failed: {e}")
+            return None
 
     def get_audio_path(self, surah, ayah):
         audio_file = f"{surah:03}{ayah:03}.mp3"

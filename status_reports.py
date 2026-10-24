@@ -42,6 +42,42 @@ class StatusMixin:
         self.log_action("INFO", f"Default config generated at {config.USER_CONFIG_FILE}")
         return True
 
+    def handle_config_get(self):
+        """Return config.ini rendered with schema comments + effective values."""
+        return config.render_template()
+
+    def handle_config_defaults(self):
+        """Return config.ini rendered with all defaults active (for Restore Defaults)."""
+        return config.render_defaults()
+
+    def handle_config_set(self, args):
+        """Validate text, write config.ini, reload state, apply conky changes."""
+        ok, err = config.validate_ini(args)
+        if not ok:
+            self.error_msg = f"Validation failed: {err}"
+            self.log_action("ERROR", self.error_msg)
+            return False
+        try:
+            with open(config.USER_CONFIG_FILE, "w", encoding="utf-8") as f:
+                f.write(args)
+        except OSError as e:
+            self.error_msg = f"Write failed: {e}"
+            self.log_action("ERROR", self.error_msg)
+            return False
+
+        was_conky_enabled = self.conky_enabled
+        config.reload()
+        self.audio_base = config.get('daemon', 'FILES_DIRECTORY', config.SAMPLE_DIR)
+        self.conky_enabled = config.getboolean('conky', 'enable', True)
+
+        if self.conky_enabled and not was_conky_enabled:
+            self._start_conky()
+        elif not self.conky_enabled and was_conky_enabled:
+            self._stop_conky()
+
+        self.log_action("INFO", "Configuration updated via config_set")
+        return True
+
     def handle_reload_config(self):
         """Re-read config.ini from disk and refresh config-derived state."""
         if not config.reload():
@@ -55,7 +91,7 @@ class StatusMixin:
 
     def handle_log(self, args):
         try:
-            numlines = int(args)
+            numlines = min(int(args), 10_000)
             with open(config.LOG_FILE, "r") as file:
                 last_n_lines = deque(file, maxlen=numlines)
                 return '\n'.join(last_n_lines)
@@ -158,9 +194,71 @@ class StatusMixin:
 
         return "\n".join(info_lines)
 
+    def handle_conky_config(self):
+        """Return current conky config as JSON (client reads it as data)."""
+        from conky_config_manager import conky_config
+        return conky_config.render_json()
+
+    def handle_conky_config_defaults(self):
+        """Return default conky config as JSON (for 'Restore Defaults')."""
+        from conky_config_manager import conky_config
+        return conky_config.render_defaults_json()
+
+    def handle_conky_config_set(self, args):
+        """Save new conky config from a JSON string (validated daemon-side)."""
+        from conky_config_manager import conky_config, ConkyConfigError
+        try:
+            new_config = json.loads(args)
+        except json.JSONDecodeError as e:
+            self.error_msg = f"Invalid JSON: {e}"
+            self.log_action("ERROR", self.error_msg)
+            return False
+        try:
+            conky_config.save(new_config)
+        except ConkyConfigError as e:
+            self.error_msg = f"Validation failed: {e}"
+            self.log_action("ERROR", self.error_msg)
+            return False
+        # If conky was running, restart so new config takes effect.
+        if self.conky_process and self.conky_process.poll() is None:
+            self._stop_conky()
+            self._start_conky()
+        self.log_action("INFO", "Conky config updated")
+        return True
+
+    def handle_conky_config_reset(self):
+        """Restore conky config to defaults and restart conky if running."""
+        from conky_config_manager import conky_config
+        try:
+            conky_config.reset()
+        except Exception as e:
+            self.error_msg = f"Reset failed: {e}"
+            self.log_action("ERROR", self.error_msg)
+            return False
+        if self.conky_process and self.conky_process.poll() is None:
+            self._stop_conky()
+            self._start_conky()
+        self.log_action("INFO", "Conky config reset to defaults")
+        return True
+
+
+def _link(url, label):
+    """OSC-8 hyperlink where supported, plain 'label: url' otherwise."""
+    if not sys.stdout.isatty():
+        return f"{label}: {url}"
+    term = os.environ.get("TERM", "").lower()
+    if term in ("", "dumb"):
+        return f"{label}: {url}"
+    if os.environ.get("TMUX") and term.startswith("screen"):
+        return f"{label}: {url}"
+    return f"\033]8;;{url}\a{label}\033]8;;\a"
+
 
 def about():
     ver_line = f"Version {VERSION}".center(54)
+    website_line = _link("https://mosaid.xyz/quran-player", "🌐 Website")
+    github_line = _link("https://github.com/neoMOSAID/quran-player", "🐙 GitHub Repository")
+
     about_info = f"""
     ┌──────────────────────────────────────────────────────┐
     │                  Quran Player Daemon                 │
@@ -175,8 +273,8 @@ def about():
     │                     Project Links                    │
     └──────────────────────────────────────────────────────┘
 
-    \033]8;;https://mosaid.xyz/quran-player\a🌐 Website\033]8;;\a
-    \033]8;;https://github.com/neoMOSAID/quran-player\a🐙 GitHub Repository\033]8;;\a
+    {website_line}
+    {github_line}
 
     ┌──────────────────────────────────────────────────────┐
     │                 Supported Commands                   │
@@ -197,6 +295,9 @@ def about():
         ("ns / ps", "Next / previous surah"),
         ("dir <path>", "Change audio directory"),
         ("conky_on / conky_off / conky_toggle", "Control desktop verse display"),
+        ("conky_config*", "Inspect / edit Conky display config"),
+        ("config_get / config_defaults / config_set", "Inspect / edit config.ini"),
+        ("reload_config", "Reload config.ini from disk"),
         ("status", "JSON status snapshot"),
         ("info", "Full diagnostic dump"),
         ("config", "Regenerate config.ini"),
@@ -204,8 +305,8 @@ def about():
         ("about / help", "Show this info"),
     ]
 
-    cmd_list = "\n".join([f"  {cmd[0]:<38} {cmd[1]}" for cmd in commands])
+    cmd_list = "\n".join([f"  {cmd[0]:<42} {cmd[1]}" for cmd in commands])
     print(f"{about_info}\n{cmd_list}\n\n    © 2026 Quran Player Project - GPLv3 License")
     return True
-
+    
 

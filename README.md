@@ -33,7 +33,8 @@ A background daemon plays Quran recitations verse-by-verse while **Conky** rende
 - `conky_on` / `conky_off` — hide the verse display without stopping the daemon
 - Dark-themed GUI with tray integration and keyboard shortcuts
 - Arabic search with hamza/diacritic normalization
-- **Zero runtime dependencies beyond `python3`, `conky`, `pactl`**
+- **No system dependencies beyond `python3`, `conky`, and a working PulseAudio/PipeWire**
+  (Python deps are pinned in `requirements.txt` and installed into a private venv under `~/.quran-player/env`)
 
 ---
 
@@ -177,18 +178,18 @@ quran-player/
 ├── quran_search.py
 ├── audio_player.py
 ├── config_manager.py
+├── conky_config_manager.py
 ├── install.py
 ├── load.py
 ├── default_config.ini
 ├── requirements.txt
 ├── quran-text/            # chapters.txt, uthmani.txt, simplified.txt
 ├── audio/                 # bundled sample ayahs
-├── quran_daemon_conky/    # → installed as ~/.quran-player/conky/
-│   ├── conky_quran
-│   ├── reshape_arabic.py
-│   ├── reshape_arabic.sh
-│   └── config.ini
-└── move_dead_files.sh     # repo utility
+└── quran_daemon_conky/    # → installed as ~/.quran-player/conky/
+    ├── conky_quran
+    ├── reshape_arabic.py
+    ├── display_verse.sh
+    └── config.ini
 ```
 
 ---

@@ -1,32 +1,33 @@
+
 .\" Manpage for quran-daemon
-.TH QURAN-DAEMON 1 "Feb 2025" "v2.0.3" "Quran Player Daemon Manual"
+.TH QURAN-DAEMON 1 "Oct 2026" "v2.0.3" "Quran Player Daemon Manual"
 .SH NAME
 quran-daemon \- Quran Player Daemon
 .SH SYNOPSIS
 .B quran-daemon
 [\fICOMMAND\fR] [\fIARGUMENTS\fR]...
 .SH DESCRIPTION
-The Quran Player Daemon is a background service that provides Quranic verse
-playback with synchronized visual display and Arabic text rendering. It supports
-verse-by-verse audio playback with auto-advance, persistent playback state across
-sessions, repeat functionality, and an optional system tray GUI controller.
+The Quran Player Daemon is a Linux-native background service that provides
+Quranic verse audio playback with synchronized desktop verse display via
+Conky. It supports verse-by-verse playback with auto-advance, persistent
+playback state across sessions, repeat ranges, an optional Conky desktop
+overlay, and a PyQt5 tray GUI controller.
 
-The daemon communicates with a GUI controller via a control socket (using UNIX domain
-sockets on Linux/macOS or TCP/Named Pipes on Windows) and is configured via an
-INI-style configuration file.
+The daemon communicates with clients over a UNIX domain socket and is
+configured via an INI-style configuration file.
 .SH COMMANDS
 The following commands are supported:
 .TP
 .B start
-Start the daemon. This initializes the service, binds the control socket, and
-begins listening for client commands.
+Start the daemon. Initializes audio, launches Conky (if enabled), binds the
+control socket, and begins listening.
 .TP
 .B stop
-Stop the daemon. This causes the daemon to shut down gracefully, releasing all
-resources and cleaning up socket and PID files.
+Stop the daemon gracefully. Releases the audio device, terminates Conky, and
+removes socket and PID files.
 .TP
 .B play
-Resume audio playback.
+Resume audio playback from the last saved verse.
 .TP
 .B pause
 Pause the current playback.
@@ -34,136 +35,115 @@ Pause the current playback.
 .B toggle
 Toggle between play and pause.
 .TP
-.B next
-Advance to the next verse.
+.B next / prev
+Advance to / return to the next / previous verse.
 .TP
-.B prev
-Return to the previous verse.
-.TP
-.B load
-Load a specific verse. The command expects an argument in the format
-\fIsurah:ayah\fR (for example, \fI2:255\fR).
-.TP
-.B repeat
-Repeat a range of verses. Provide the range in the format
-\fIstart:end\fR (for example, \fI10:15\fR). Note that issuing a play or load command
-cancels repeat mode.
-.TP
-.B goto
+.B goto \fIayah\fR
 Jump to a specific ayah in the current surah.
 .TP
-.B ns / ps
-Next / previous surah.
+.B load \fIsurah\fR[:\fIayah\fR]
+Load a surah from its beginning, or a specific verse.
 .TP
-.B dir
+.B repeat \fIform\fR
+Set a repeat range (\fIsurah\fR, \fIstart:end\fR, or \fIsurah:start:end\fR).
+Use \fBrepeat off\fR to disable.
+.TP
+.B repeat_off
+Turn off repeat mode.
+.TP
+.B ns / ps
+Next / previous surah. Clears any active repeat range.
+.TP
+.B dir \fIpath\fR
 Change audio directory and reload the current verse.
 .TP
+.B conky_on / conky_off / conky_toggle
+Start / stop / toggle the Conky desktop verse display.
+.TP
+.B conky_config / conky_config_defaults / conky_config_reset / conky_config_set
+Inspect / show defaults / reset / validate-and-save the Conky display config.
+.TP
+.B config_get / config_defaults / config_set
+Inspect / reset / validate-and-save config.ini.
+.TP
+.B reload_config
+Re-read config.ini from disk and refresh daemon state.
+.TP
 .B status
-Display the current playback status, including the surah and ayah numbers and
-playback state.
-.TP
-.B config
-Generate the default configuration file in the user configuration directory.
-.TP
-.B cleanup
-Remove orphaned runtime files (e.g. stale PID or socket files).
+Print a JSON status snapshot.
 .TP
 .B info
-Display detailed information about daemon status, configuration settings,
-file integrity, and system information.
+Print a detailed diagnostic report.
 .TP
-.B help / about
-Display a help message or program information.
+.B cleanup
+Remove stale runtime files (PID, socket) when no daemon is running.
+.TP
+.B config
+Regenerate the default configuration file.
+.TP
+.B about / help
+Show project info and the full command reference.
 .SH CONFIGURATION
-The daemon uses an INI-style configuration file. On Linux/macOS, the file is typically
-located at:
+The daemon uses an INI-style configuration file at:
 .IP
 \fB~/.config/quran-player/config.ini\fR
-.IP
-On Windows, it is stored in the APPDATA folder.
 .PP
-The configuration file is divided into two main sections: \fB[daemon]\fR and \fB[image]\fR.
+It has two sections: \fB[daemon]\fR and \fB[conky]\fR.
 .SH "Daemon Section"
-The \fB[daemon]\fR section includes:
 .TP
-\fBMAX_LOG_SIZE\fR
-Maximum size (in bytes) of the log file before rotation occurs. Default: \fB1000000\fR.
+\fBmax_log_size\fR
+Maximum size (in bytes) of the log file before rotation. Default: \fB1000000\fR.
 .TP
-\fBLOG_LEVEL\fR
-Log verbosity level. Possible values are:
-\fBCRITICAL\fR, \fBERROR\fR, \fBWARNING\fR, \fBINFO\fR, \fBDEBUG\fR, or \fBDISABLED\fR.
-Default: \fBINFO\fR.
+\fBlog_level\fR
+Log verbosity: \fBCRITICAL\fR, \fBERROR\fR, \fBWARNING\fR, \fBINFO\fR,
+\fBDEBUG\fR, or \fBDISABLED\fR. Default: \fBINFO\fR.
 .TP
-\fBFILES_DIRECTORY\fR
-The directory where the audio files are stored. If not specified, a default directory
-(e.g., within the user configuration directory) is used.
-.SH "Image Section"
-The \fB[image]\fR section contains settings for rendering Quranic verses as images:
+\fBfiles_directory\fR
+Directory containing audio files (\fISSSAAA.mp3\fR). Empty means use the
+bundled sample directory \fB~/.config/quran-player/sample/\fR.
+.SH "Conky Section"
 .TP
-\fBENABLE\fR
-Enable or disable image display. Accepts \fByes\fR or \fBno\fR. Default is \fByes\fR on Linux
-and \fBno\fR on other platforms.
+\fBenable\fR
+Show the current verse on the desktop via Conky (\fByes\fR / \fBno\fR).
+Default: \fByes\fR.
 .TP
-\fBDEFAULT_RESOLUTION\fR
-Default resolution for the generated image in the format \fIWIDTHxHEIGHT\fR (e.g.,
-\fI1240x170\fR).
-.TP
-\fBFONT_FILE\fR
-Path to the Arabic font file used for rendering. By default, the \fBarabic-font.ttf\fR
-in the script or user configuration directory is used.
-.TP
-\fBFONT_SIZE\fR
-Font size for rendering the text. Default: \fB48\fR.
-.TP
-\fBIMAGE_WIDTH\fR
-Width of the generated image in pixels. Default: \fB1240\fR.
-.TP
-\fBWRAP_WIDTH\fR
-Maximum number of characters per line before wrapping. Default: \fB170\fR.
-.TP
-\fBVERTICAL_PADDING\fR
-Vertical padding (in pixels) added to the top and bottom of the image. Default: \fB20\fR.
-.TP
-\fBBG_COLOR\fR
-Background color as a comma-separated RGBA string (for example, \fB0,0,0,0\fR). Default:
-\fB0,0,0,0\fR.
-.TP
-\fBTEXT_COLOR\fR
-Text color as a comma-separated RGBA string (for example, \fB255,255,255,255\fR).
-Default: \fB255,255,255,255\fR.
-.TP
-\fBHIGHLIGHT_COLOR\fR
-Highlight color for indicating a specific line, as a comma-separated RGBA string
-(e.g., \fB255,0,0,255\fR). Default: \fB255,0,0,255\fR.
+\fBexecutable\fR
+Path to the conky executable. Empty means auto-detect from \fBPATH\fR.
+.SH "Conky Display Config"
+Fine-grained Conky settings live in \fB~/.config/quran-player/conky_config.json\fR.
+Edit via \fBconky_config_set\fR or the GUI's "Conky Config" dialog; invalid
+JSON or schema violations are rejected before writing.
 .SH FILES
 .TP
 \fBdaemon.py\fR
-The main daemon script.
+Main daemon entry point.
 .TP
 \fBquran_gui.py\fR
-PyQt5 GUI controller.
+PyQt5 tray controller.
 .TP
 \fBquran_search.py\fR
 Search tool (CLI and interactive).
 .TP
 \fBinstall.py\fR
-Cross-platform installer.
+Linux-native installer.
 .TP
 \fBdefault_config.ini\fR
-Default configuration file shipped with the daemon.
+Default configuration template.
 .TP
 \fBconfig.ini\fR
-User configuration file. Typically located in \fB~/.config/quran-player/\fR (Linux/macOS)
-or in the APPDATA folder (Windows).
+User configuration file (\fB~/.config/quran-player/config.ini\fR).
 .TP
-\fBdaemon.sock\fR or \fB\\\\.\\pipe\\quran-daemon\fR (Windows)
-The control socket used for inter-process communication.
+\fBconky_config.json\fR
+User-editable Conky display config.
+.TP
+\fBdaemon.sock\fR
+Control socket for inter-process communication.
 .TP
 \fBdaemon.pid\fR
-File storing the daemon’s process ID.
+Daemon process ID file.
 .TP
 \fBdaemon.log\fR
-Log file for daemon events.
+Daemon log file.
 .SH USAGE EXAMPLES
 .TP
 Start the daemon:
@@ -197,34 +177,8 @@ quran-daemon config
 Display help:
 .B
 quran-daemon help
-.SH ENVIRONMENT VARIABLES
-The following environment variables can override default configuration values:
-.TP
-\fBPYTHON_IMAGE_WIDTH\fR
-Overrides the default image width.
-.TP
-\fBPYTHON_IMAGE_WRAP_WIDTH\fR
-Overrides the default wrap width.
-.TP
-\fBPYTHON_IMAGE_FONT_SIZE\fR
-Overrides the default font size.
-.TP
-\fBPYTHON_IMAGE_FONT\fR
-Overrides the default font family.
-.TP
-\fBPYTHON_IMAGE_BG_COLOR\fR
-Overrides the default background color.
-.TP
-\fBPYTHON_IMAGE_TEXT_COLOR\fR
-Overrides the default text color.
-.TP
-\fBPYTHON_IMAGE_HIGHLIGHT_COLOR\fR
-Overrides the default highlight color.
-.TP
-\fBPYTHON_IMAGE_VERTICAL_PADDING\fR
-Overrides the default vertical padding.
 .SH BUGS
-Report bugs and issues via the project’s GitHub issue tracker:
+Report bugs via the project's GitHub issue tracker:
 .IP
 https://github.com/neoMOSAID/quran-player/issues
 .SH AUTHOR
