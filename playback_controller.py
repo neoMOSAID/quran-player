@@ -38,20 +38,22 @@ class PlaybackMixin:
         return False
 
     def handle_playback_events(self):
-        if self.audio_player.state == "playing":
-            busy = self.audio_player.is_busy()
-            if busy is None:
-                self.log_action("WARNING", "Audio system error, reinitializing")
-                self.audio_player.init_audio()
-            elif not busy:
-                # handle_playback_end may fail if the next verse has no audio;
-                # play_verse() already logs, but make it visible at WARNING.
-                self.error_msg = ""   # discard any stale client error
-                if not self.handle_playback_end():
-                    self.log_action(
-                        "WARNING",
-                        f"Auto-advance stopped at {self.current_verse[0]}:{self.current_verse[1]}"
-                    )
+        self.audio_player.maybe_shutdown_if_idle()
+
+        if self.audio_player.state != "playing":
+            return
+
+        busy = self.audio_player.is_busy()
+        if busy is None:
+            self.log_action("WARNING", "Audio system error, reinitializing")
+            self.audio_player.init_audio()
+        elif not busy:
+            self.error_msg = ""
+            if not self.handle_playback_end():
+                self.log_action(
+                    "WARNING",
+                    f"Auto-advance stopped at {self.current_verse[0]}:{self.current_verse[1]}",
+                )
 
     def play_verse(self, verse):
         surah, ayah = verse
